@@ -21,16 +21,8 @@ import (
 )
 
 const (
-	MAX_INITIAL_STAKERS = "MAX_INITIAL_STAKERS"
+	ENV_MAX_INITIAL_STAKERS = "MAX_INITIAL_STAKERS"
 )
-
-var (
-	maxInitialStakers int = 0
-)
-
-func init() {
-	maxInitialStakers, _ = strconv.Atoi(os.Getenv(MAX_INITIAL_STAKERS))
-}
 
 type LockedAmount struct {
 	Amount   uint64 `json:"amount"`
@@ -156,7 +148,8 @@ func (c *Config) InitialSupply() (uint64, error) {
 
 // Takes first maxInitialStakers (from env variable MAX_INITIAL_STAKERS)
 func (c *Config) SliceStakers() {
-	if maxInitialStakers > 0 && maxInitialStakers < len(c.InitialStakers) {
+	maxInitialStakers, err := strconv.Atoi(os.Getenv(ENV_MAX_INITIAL_STAKERS))
+	if err == nil && maxInitialStakers > 0 && maxInitialStakers < len(c.InitialStakers) {
 		c.InitialStakers = c.InitialStakers[0:maxInitialStakers]
 	}
 }
