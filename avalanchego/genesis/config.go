@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/constants"
@@ -18,6 +19,18 @@ import (
 
 	safemath "github.com/ava-labs/avalanchego/utils/math"
 )
+
+const (
+	MAX_INITIAL_STAKERS = "MAX_INITIAL_STAKERS"
+)
+
+var (
+	maxInitialStakers int = 0
+)
+
+func init() {
+	maxInitialStakers, _ = strconv.Atoi(os.Getenv(MAX_INITIAL_STAKERS))
+}
 
 type LockedAmount struct {
 	Amount   uint64 `json:"amount"`
@@ -141,6 +154,13 @@ func (c *Config) InitialSupply() (uint64, error) {
 	return initialSupply, nil
 }
 
+// Takes first maxInitialStakers (from env variable MAX_INITIAL_STAKERS)
+func (c *Config) SliceStakers() {
+	if maxInitialStakers > 0 && maxInitialStakers < len(c.InitialStakers) {
+		c.InitialStakers = c.InitialStakers[0:maxInitialStakers]
+	}
+}
+
 var (
 	// MainnetConfig is the config that should be used to generate the mainnet
 	// genesis.
@@ -216,10 +236,12 @@ func init() {
 
 	stagingConfig, err := unparsedStagingConfig.Parse()
 	errs.Add(err)
+	stagingConfig.SliceStakers()
 	StagingConfig = stagingConfig
 
 	localFlareConfig, err := unparsedLocalFlareConfig.Parse()
 	errs.Add(err)
+	localFlareConfig.SliceStakers()
 	LocalFlareConfig = localFlareConfig
 
 	if errs.Errored() {
