@@ -166,9 +166,17 @@ var (
 	// staging genesis.
 	StagingConfig Config
 
+	// Staging5Config is the config that should be used to generate a flare
+	// staging genesis with 5 initial validators
+	Staging5Config Config
+
 	// LocalFlareConfig is the config that should be used to generate a localFlare
 	// genesis.
 	LocalFlareConfig Config
+
+	// LocalFlare2Config is the config that should be used to generate a localFlare
+	// genesis.
+	LocalFlare2Config Config
 )
 
 func init() {
@@ -178,7 +186,9 @@ func init() {
 	unparsedFlareConfig := UnparsedConfig{}
 	unparsedCostwoConfig := UnparsedConfig{}
 	unparsedStagingConfig := UnparsedConfig{}
+	unparsedStaging5Config := UnparsedConfig{}
 	unparsedLocalFlareConfig := UnparsedConfig{}
+	unparsedLocalFlare2Config := UnparsedConfig{}
 
 	errs := wrappers.Errs{}
 	errs.Add(
@@ -188,7 +198,9 @@ func init() {
 		json.Unmarshal(flareGenesisConfigJSON, &unparsedFlareConfig),
 		json.Unmarshal(costwoGenesisConfigJSON, &unparsedCostwoConfig),
 		json.Unmarshal(stagingGenesisConfigJSON, &unparsedStagingConfig),
+		json.Unmarshal(staging5GenesisConfigJSON, &unparsedStaging5Config),
 		json.Unmarshal(localFlareGenesisConfigJSON, &unparsedLocalFlareConfig),
+		json.Unmarshal(localFlare2GenesisConfigJSON, &unparsedLocalFlare2Config),
 	)
 	if errs.Errored() {
 		panic(errs.Err)
@@ -218,9 +230,17 @@ func init() {
 	errs.Add(err)
 	StagingConfig = stagingConfig
 
+	staging5Config, err := unparsedStagingConfig.Parse()
+	errs.Add(err)
+	Staging5Config = staging5Config
+
 	localFlareConfig, err := unparsedLocalFlareConfig.Parse()
 	errs.Add(err)
 	LocalFlareConfig = localFlareConfig
+
+	localFlare2Config, err := unparsedLocalFlare2Config.Parse()
+	errs.Add(err)
+	LocalFlare2Config = localFlare2Config
 
 	if errs.Errored() {
 		panic(errs.Err)
@@ -241,8 +261,12 @@ func GetConfig(networkID uint32) *Config {
 		return &CostwoConfig
 	case constants.StagingID:
 		return &StagingConfig
+	case constants.Staging5ID:
+		return &Staging5Config
 	case constants.LocalFlareID:
 		return &LocalFlareConfig
+	case constants.LocalFlare2ID:
+		return &LocalFlare2Config
 	default:
 		tempConfig := LocalConfig
 		tempConfig.NetworkID = networkID

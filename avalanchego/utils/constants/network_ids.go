@@ -19,26 +19,30 @@ const (
 	EverestID uint32 = 4
 	FujiID    uint32 = 5
 
-	TestnetID    uint32 = FujiID
-	UnitTestID   uint32 = 10
-	LocalID      uint32 = 12345
-	FlareID      uint32 = 14
-	CostwoID     uint32 = 114
-	StagingID    uint32 = 161
-	LocalFlareID uint32 = 162
+	TestnetID     uint32 = FujiID
+	UnitTestID    uint32 = 10
+	LocalID       uint32 = 12345
+	FlareID       uint32 = 14
+	CostwoID      uint32 = 114
+	StagingID     uint32 = 161
+	Staging5ID    uint32 = 163
+	LocalFlareID  uint32 = 162
+	LocalFlare2ID uint32 = 165
 
-	MainnetName    = "mainnet"
-	CascadeName    = "cascade"
-	DenaliName     = "denali"
-	EverestName    = "everest"
-	FujiName       = "fuji"
-	TestnetName    = "testnet"
-	UnitTestName   = "testing"
-	LocalName      = "local"
-	FlareName      = "flare"
-	CostwoName     = "costwo"
-	StagingName    = "staging"
-	LocalFlareName = "localflare"
+	MainnetName     = "mainnet"
+	CascadeName     = "cascade"
+	DenaliName      = "denali"
+	EverestName     = "everest"
+	FujiName        = "fuji"
+	TestnetName     = "testnet"
+	UnitTestName    = "testing"
+	LocalName       = "local"
+	FlareName       = "flare"
+	CostwoName      = "costwo"
+	StagingName     = "staging"
+	Staging5Name    = "staging5"
+	LocalFlareName  = "localflare"
+	LocalFlare2Name = "localflare2"
 
 	MainnetHRP    = "avax"
 	CascadeHRP    = "cascade"
@@ -60,45 +64,51 @@ var (
 	PlatformChainID  = ids.Empty
 
 	NetworkIDToNetworkName = map[uint32]string{
-		MainnetID:    MainnetName,
-		CascadeID:    CascadeName,
-		DenaliID:     DenaliName,
-		EverestID:    EverestName,
-		FujiID:       FujiName,
-		UnitTestID:   UnitTestName,
-		LocalID:      LocalName,
-		FlareID:      FlareName,
-		CostwoID:     CostwoName,
-		StagingID:    StagingName,
-		LocalFlareID: LocalFlareName,
+		MainnetID:     MainnetName,
+		CascadeID:     CascadeName,
+		DenaliID:      DenaliName,
+		EverestID:     EverestName,
+		FujiID:        FujiName,
+		UnitTestID:    UnitTestName,
+		LocalID:       LocalName,
+		FlareID:       FlareName,
+		CostwoID:      CostwoName,
+		StagingID:     StagingName,
+		Staging5ID:    Staging5Name,
+		LocalFlareID:  LocalFlareName,
+		LocalFlare2ID: LocalFlare2Name,
 	}
 	NetworkNameToNetworkID = map[string]uint32{
-		MainnetName:    MainnetID,
-		CascadeName:    CascadeID,
-		DenaliName:     DenaliID,
-		EverestName:    EverestID,
-		FujiName:       FujiID,
-		TestnetName:    TestnetID,
-		UnitTestName:   UnitTestID,
-		LocalName:      LocalID,
-		FlareName:      FlareID,
-		CostwoName:     CostwoID,
-		StagingName:    StagingID,
-		LocalFlareName: LocalFlareID,
+		MainnetName:     MainnetID,
+		CascadeName:     CascadeID,
+		DenaliName:      DenaliID,
+		EverestName:     EverestID,
+		FujiName:        FujiID,
+		TestnetName:     TestnetID,
+		UnitTestName:    UnitTestID,
+		LocalName:       LocalID,
+		FlareName:       FlareID,
+		CostwoName:      CostwoID,
+		StagingName:     StagingID,
+		Staging5Name:    Staging5ID,
+		LocalFlareName:  LocalFlareID,
+		LocalFlare2Name: LocalFlare2ID,
 	}
 
 	NetworkIDToHRP = map[uint32]string{
-		MainnetID:    MainnetHRP,
-		CascadeID:    CascadeHRP,
-		DenaliID:     DenaliHRP,
-		EverestID:    EverestHRP,
-		FujiID:       FujiHRP,
-		UnitTestID:   UnitTestHRP,
-		LocalID:      LocalHRP,
-		FlareID:      FlareHRP,
-		CostwoID:     CostwoHRP,
-		StagingID:    StagingHRP,
-		LocalFlareID: LocalFlareHRP,
+		MainnetID:     MainnetHRP,
+		CascadeID:     CascadeHRP,
+		DenaliID:      DenaliHRP,
+		EverestID:     EverestHRP,
+		FujiID:        FujiHRP,
+		UnitTestID:    UnitTestHRP,
+		LocalID:       LocalHRP,
+		FlareID:       FlareHRP,
+		CostwoID:      CostwoHRP,
+		StagingID:     StagingHRP,
+		Staging5ID:    StagingHRP,
+		LocalFlareID:  LocalFlareHRP,
+		LocalFlare2ID: LocalFlareHRP,
 	}
 	NetworkHRPToNetworkID = map[string]uint32{
 		MainnetHRP:    MainnetID,
