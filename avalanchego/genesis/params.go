@@ -63,6 +63,8 @@ func GetTxFeeConfig(networkID uint32) TxFeeConfig {
 		return CostwoParams.TxFeeConfig
 	case constants.StagingID:
 		return StagingParams.TxFeeConfig
+	case constants.Staging5ID:
+		return Staging5Params.TxFeeConfig
 	case constants.LocalFlareID:
 		return LocalFlareParams.TxFeeConfig
 	default:
@@ -84,6 +86,8 @@ func GetStakingConfig(networkID uint32) StakingConfig {
 		return CostwoParams.StakingConfig
 	case constants.StagingID:
 		return StagingParams.StakingConfig
+	case constants.Staging5ID:
+		return Staging5Params.StakingConfig
 	case constants.LocalFlareID:
 		return LocalFlareParams.StakingConfig
 	default:

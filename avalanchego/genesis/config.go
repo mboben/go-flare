@@ -166,6 +166,10 @@ var (
 	// staging genesis.
 	StagingConfig Config
 
+	// Staging5Config is the config that should be used to generate a flare
+	// staging genesis with 5 initial validators
+	Staging5Config Config
+
 	// LocalFlareConfig is the config that should be used to generate a localFlare
 	// genesis.
 	LocalFlareConfig Config
@@ -178,6 +182,7 @@ func init() {
 	unparsedFlareConfig := UnparsedConfig{}
 	unparsedCostwoConfig := UnparsedConfig{}
 	unparsedStagingConfig := UnparsedConfig{}
+	unparsedStaging5Config := UnparsedConfig{}
 	unparsedLocalFlareConfig := UnparsedConfig{}
 
 	errs := wrappers.Errs{}
@@ -188,6 +193,7 @@ func init() {
 		json.Unmarshal(flareGenesisConfigJSON, &unparsedFlareConfig),
 		json.Unmarshal(costwoGenesisConfigJSON, &unparsedCostwoConfig),
 		json.Unmarshal(stagingGenesisConfigJSON, &unparsedStagingConfig),
+		json.Unmarshal(staging5GenesisConfigJSON, &unparsedStaging5Config),
 		json.Unmarshal(localFlareGenesisConfigJSON, &unparsedLocalFlareConfig),
 	)
 	if errs.Errored() {
@@ -218,6 +224,10 @@ func init() {
 	errs.Add(err)
 	StagingConfig = stagingConfig
 
+	staging5Config, err := unparsedStaging5Config.Parse()
+	errs.Add(err)
+	Staging5Config = staging5Config
+
 	localFlareConfig, err := unparsedLocalFlareConfig.Parse()
 	errs.Add(err)
 	LocalFlareConfig = localFlareConfig
@@ -241,6 +251,8 @@ func GetConfig(networkID uint32) *Config {
 		return &CostwoConfig
 	case constants.StagingID:
 		return &StagingConfig
+	case constants.Staging5ID:
+		return &Staging5Config
 	case constants.LocalFlareID:
 		return &LocalFlareConfig
 	default:

@@ -52,6 +52,7 @@ var (
 		constants.FlareID:      time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 		constants.CostwoID:     time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 		constants.StagingID:    time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
+		constants.Staging5ID:   time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 		constants.LocalFlareID: time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 	}
 	ApricotPhase3DefaultTime = time.Date(2020, time.December, 5, 5, 0, 0, 0, time.UTC)
@@ -62,6 +63,7 @@ var (
 		constants.FlareID:      time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 		constants.CostwoID:     time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 		constants.StagingID:    time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
+		constants.Staging5ID:   time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 		constants.LocalFlareID: time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 	}
 	ApricotPhase4DefaultTime     = time.Date(2020, time.December, 5, 5, 0, 0, 0, time.UTC)
@@ -77,6 +79,7 @@ var (
 		constants.FlareID:      time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 		constants.CostwoID:     time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 		constants.StagingID:    time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
+		constants.Staging5ID:   time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 		constants.LocalFlareID: time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
 	}
 	ApricotPhase5DefaultTime = time.Date(2020, time.December, 5, 5, 0, 0, 0, time.UTC)
@@ -88,6 +91,7 @@ var (
 		constants.FlareID:      time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 		constants.CostwoID:     time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 		constants.StagingID:    time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
+		constants.Staging5ID:   time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 		constants.LocalFlareID: time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 	}
 	BlueberryDefaultTime = time.Date(2020, time.December, 5, 5, 0, 0, 0, time.UTC)
@@ -99,6 +103,7 @@ var (
 		constants.FlareID:      time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 		constants.CostwoID:     time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 		constants.StagingID:    time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
+		constants.Staging5ID:   time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 		constants.LocalFlareID: time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 	}
 	XChainMigrationDefaultTime = time.Date(2020, time.December, 5, 5, 0, 0, 0, time.UTC)

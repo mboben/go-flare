@@ -25,6 +25,7 @@ const (
 	FlareID      uint32 = 14
 	CostwoID     uint32 = 114
 	StagingID    uint32 = 161
+	Staging5ID   uint32 = 163
 	LocalFlareID uint32 = 162
 
 	MainnetName    = "mainnet"
@@ -38,6 +39,7 @@ const (
 	FlareName      = "flare"
 	CostwoName     = "costwo"
 	StagingName    = "staging"
+	Staging5Name   = "staging5"
 	LocalFlareName = "localflare"
 
 	MainnetHRP    = "avax"
@@ -51,6 +53,7 @@ const (
 	FlareHRP      = "flare"
 	CostwoHRP     = "costwo"
 	StagingHRP    = "staging"
+	Staging5HRP   = "staging"
 	LocalFlareHRP = "localflare"
 )
 
@@ -70,6 +73,7 @@ var (
 		FlareID:      FlareName,
 		CostwoID:     CostwoName,
 		StagingID:    StagingName,
+		Staging5ID:   Staging5Name,
 		LocalFlareID: LocalFlareName,
 	}
 	NetworkNameToNetworkID = map[string]uint32{
@@ -84,6 +88,7 @@ var (
 		FlareName:      FlareID,
 		CostwoName:     CostwoID,
 		StagingName:    StagingID,
+		Staging5Name:   Staging5ID,
 		LocalFlareName: LocalFlareID,
 	}
 
@@ -98,6 +103,7 @@ var (
 		FlareID:      FlareHRP,
 		CostwoID:     CostwoHRP,
 		StagingID:    StagingHRP,
+		Staging5ID:   Staging5HRP,
 		LocalFlareID: LocalFlareHRP,
 	}
 	NetworkHRPToNetworkID = map[string]uint32{

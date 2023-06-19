@@ -89,7 +89,7 @@ func (e *ProposalTxExecutor) getCurrentInflationSettings(currentTimestamp time.T
 			365 * 24 * time.Hour,
 			MaxFutureStartTime,
 			time.Date(2023, time.May, 25, 15, 0, 0, 0, time.UTC)
-	case constants.StagingID:
+	case constants.StagingID, constants.Staging5ID:
 		return 100 * units.KiloAvax,
 			50 * units.MegaAvax,
 			1 * units.KiloAvax,
@@ -287,7 +287,7 @@ func (e *ProposalTxExecutor) AddSubnetValidatorTx(tx *txs.AddSubnetValidatorTx) 
 		return errWrongNumberOfCredentials
 	}
 
-	if e.Backend.Ctx.NetworkID == constants.FlareID || e.Backend.Ctx.NetworkID == constants.CostwoID || e.Backend.Ctx.NetworkID == constants.StagingID || e.Backend.Ctx.NetworkID == constants.LocalFlareID {
+	if e.Backend.Ctx.NetworkID == constants.FlareID || e.Backend.Ctx.NetworkID == constants.CostwoID || e.Backend.Ctx.NetworkID == constants.StagingID || e.Backend.Ctx.NetworkID == constants.Staging5ID || e.Backend.Ctx.NetworkID == constants.LocalFlareID {
 		return errStakeTooLong
 	}
 
