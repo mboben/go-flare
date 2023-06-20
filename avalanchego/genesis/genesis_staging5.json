@@ -21,27 +21,27 @@
     ],
     "initialStakers": [
         {
-            "nodeID": "NodeID-F2qXdeHH7ikN2isCU59JjQkDp2rsVz56N",
+            "nodeID": "NodeID-GD1pgnX1Zyy6bTaxCV7y3nnT8N5Ki5wdh",
             "rewardAddress": "X-staging18jma8ppw3nhx5r4ap8clazz0dps7rv5uvzsl80",
             "delegationFee": 0
         },
         {
-            "nodeID": "NodeID-CkGefuKuxWw3v1vzGkjPfkrLPdP5GMPWQ",
+            "nodeID": "NodeID-Jh1D4zPrhJ23733r9pW5AkQEp1T19eaFP",
             "rewardAddress": "X-staging18jma8ppw3nhx5r4ap8clazz0dps7rv5uvzsl80",
             "delegationFee": 0
         },
         {
-            "nodeID": "NodeID-yHDJnnZANij1wQYnZ7e8zvG47zvRz74R",
+            "nodeID": "NodeID-MXknCb1x75Rsw58Gvd68kuUs5M6A8Nuy2",
             "rewardAddress": "X-staging18jma8ppw3nhx5r4ap8clazz0dps7rv5uvzsl80",
             "delegationFee": 0
         },
         {
-            "nodeID": "NodeID-KcMcpTRa9iqa1TaeZ66TFGWQSQgwGT5Yg",
+            "nodeID": "NodeID-AKt7WaK6ozEy5K8azKNacZXLzxZ9xFgC7",
             "rewardAddress": "X-staging18jma8ppw3nhx5r4ap8clazz0dps7rv5uvzsl80",
             "delegationFee": 0
         },
         {
-            "nodeID": "NodeID-3ukjHcvtrXUvNXj556DyfGYCEtWNbhq34",
+            "nodeID": "NodeID-FQKTLuZHEsjCxPeFTFgsojsucmdyNDsz1",
             "rewardAddress": "X-staging18jma8ppw3nhx5r4ap8clazz0dps7rv5uvzsl80",
             "delegationFee": 0
         }
