@@ -24,6 +24,8 @@ func getPhaseTwoStakingStartTime(networkID uint32) time.Time {
 		return time.Date(2023, time.October, 1, 0, 0, 0, 0, time.UTC)
 	case constants.CostwoID:
 		return time.Date(2023, time.August, 31, 15, 0, 0, 0, time.UTC)
+	case constants.LocalFlareID:
+		return time.Date(2023, time.August, 31, 8, 45, 0, 0, time.UTC)
 	default:
 		return time.Date(2023, time.August, 1, 0, 0, 0, 0, time.UTC)
 	}
@@ -70,9 +72,9 @@ func getPhaseOneInflationSettings(networkID uint32, config *config.Config) (uint
 			10 * units.KiloAvax,
 			0,
 			2 * 7 * 24 * time.Hour,
-			2 * 7 * 24 * time.Hour,
+			20 * time.Minute,
 			365 * 24 * time.Hour,
-			24 * time.Hour,
+			MaxFutureStartTime,
 			MaxValidatorWeightFactor,
 			time.Date(2023, time.April, 10, 15, 0, 0, 0, time.UTC)
 	default:
@@ -113,6 +115,17 @@ func getPhaseTwoInflationSettings(networkID uint32, config *config.Config) (uint
 			MaxFutureStartTime,
 			15,
 			time.Date(2023, time.August, 31, 15, 0, 0, 0, time.UTC)
+	case constants.LocalFlareID:
+		return 22 * units.KiloAvax,
+			66 * units.MegaAvax,
+			11 * units.KiloAvax,
+			0,
+			2 * 7 * 24 * time.Hour,
+			5 * time.Minute,
+			365 * 24 * time.Hour,
+			MaxFutureStartTime,
+			MaxValidatorWeightFactor,
+			time.Date(2023, time.August, 31, 8, 45, 0, 0, time.UTC)
 	default:
 		return getPhaseOneInflationSettings(networkID, config)
 	}
