@@ -5,6 +5,7 @@ package statesync
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -62,13 +63,16 @@ type trieToSync struct {
 
 // NewTrieToSync initializes a trieToSync and restores any previously started segments.
 func NewTrieToSync(sync *stateSync, root common.Hash, account common.Hash, syncTask syncTask) (*trieToSync, error) {
-	batch := sync.db.NewBatch()
+	batch := sync.db.NewBatch() // TODO: migrate state sync to use database schemes.
+	writeFn := func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
+		rawdb.WriteTrieNode(batch, owner, path, hash, blob, rawdb.HashScheme)
+	}
 	trieToSync := &trieToSync{
 		sync:         sync,
 		root:         root,
 		account:      account,
 		batch:        batch,
-		stackTrie:    trie.NewStackTrie(batch),
+		stackTrie:    trie.NewStackTrie(writeFn),
 		isMainTrie:   (root == sync.root),
 		task:         syncTask,
 		segmentsDone: make(map[int]struct{}),
@@ -158,7 +162,7 @@ func (t *trieToSync) addSegment(start, end []byte) *trieSegment {
 
 // segmentFinished is called when one the trie segment with index [idx] finishes syncing.
 // creates intermediary hash nodes for the trie up to the last contiguous segment received from start.
-func (t *trieToSync) segmentFinished(idx int) error {
+func (t *trieToSync) segmentFinished(ctx context.Context, idx int) error {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
@@ -183,13 +187,17 @@ func (t *trieToSync) segmentFinished(idx int) error {
 		defer it.Release()
 
 		for it.Next() {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
 			if len(segment.end) > 0 && bytes.Compare(it.Key(), segment.end) > 0 {
 				// don't go past the end of the segment. (data belongs to the next segment)
 				break
 			}
 			// update the stack trie and cap the batch it writes to.
 			value := common.CopyBytes(it.Value())
-			if err := t.stackTrie.TryUpdate(it.Key(), value); err != nil {
+			if err := t.stackTrie.Update(it.Key(), value); err != nil {
 				return err
 			}
 			if t.batch.ValueSize() > t.sync.batchSize {
@@ -337,12 +345,12 @@ func (t *trieSegment) String() string {
 }
 
 // these functions implement the LeafSyncTask interface.
-func (t *trieSegment) Root() common.Hash          { return t.trie.root }
-func (t *trieSegment) Account() common.Hash       { return t.trie.account }
-func (t *trieSegment) End() []byte                { return t.end }
-func (t *trieSegment) NodeType() message.NodeType { return message.StateTrieNode }
-func (t *trieSegment) OnStart() (bool, error)     { return t.trie.task.OnStart() }
-func (t *trieSegment) OnFinish() error            { return t.trie.segmentFinished(t.idx) }
+func (t *trieSegment) Root() common.Hash                  { return t.trie.root }
+func (t *trieSegment) Account() common.Hash               { return t.trie.account }
+func (t *trieSegment) End() []byte                        { return t.end }
+func (t *trieSegment) NodeType() message.NodeType         { return message.StateTrieNode }
+func (t *trieSegment) OnStart() (bool, error)             { return t.trie.task.OnStart() }
+func (t *trieSegment) OnFinish(ctx context.Context) error { return t.trie.segmentFinished(ctx, t.idx) }
 
 func (t *trieSegment) Start() []byte {
 	if t.pos != nil {

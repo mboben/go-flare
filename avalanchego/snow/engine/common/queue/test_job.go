@@ -1,13 +1,17 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package queue
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/utils/set"
 )
 
 var (
@@ -26,10 +30,10 @@ type TestJob struct {
 	CantHasMissingDependencies bool
 
 	IDF                     func() ids.ID
-	MissingDependenciesF    func() (ids.Set, error)
-	ExecuteF                func() error
+	MissingDependenciesF    func(context.Context) (set.Set[ids.ID], error)
+	ExecuteF                func(context.Context) error
 	BytesF                  func() []byte
-	HasMissingDependenciesF func() (bool, error)
+	HasMissingDependenciesF func(context.Context) (bool, error)
 }
 
 func (j *TestJob) Default(cant bool) {
@@ -45,27 +49,27 @@ func (j *TestJob) ID() ids.ID {
 		return j.IDF()
 	}
 	if j.CantID && j.T != nil {
-		j.T.Fatalf("Unexpectedly called ID")
+		require.FailNow(j.T, "Unexpectedly called ID")
 	}
 	return ids.ID{}
 }
 
-func (j *TestJob) MissingDependencies() (ids.Set, error) {
+func (j *TestJob) MissingDependencies(ctx context.Context) (set.Set[ids.ID], error) {
 	if j.MissingDependenciesF != nil {
-		return j.MissingDependenciesF()
+		return j.MissingDependenciesF(ctx)
 	}
 	if j.CantMissingDependencies && j.T != nil {
-		j.T.Fatalf("Unexpectedly called MissingDependencies")
+		require.FailNow(j.T, "Unexpectedly called MissingDependencies")
 	}
-	return ids.Set{}, nil
+	return set.Set[ids.ID]{}, nil
 }
 
-func (j *TestJob) Execute() error {
+func (j *TestJob) Execute(ctx context.Context) error {
 	if j.ExecuteF != nil {
-		return j.ExecuteF()
+		return j.ExecuteF(ctx)
 	}
 	if j.CantExecute && j.T != nil {
-		j.T.Fatal(errExecute)
+		require.FailNow(j.T, errExecute.Error())
 	}
 	return errExecute
 }
@@ -75,17 +79,17 @@ func (j *TestJob) Bytes() []byte {
 		return j.BytesF()
 	}
 	if j.CantBytes && j.T != nil {
-		j.T.Fatalf("Unexpectedly called Bytes")
+		require.FailNow(j.T, "Unexpectedly called Bytes")
 	}
 	return nil
 }
 
-func (j *TestJob) HasMissingDependencies() (bool, error) {
+func (j *TestJob) HasMissingDependencies(ctx context.Context) (bool, error) {
 	if j.HasMissingDependenciesF != nil {
-		return j.HasMissingDependenciesF()
+		return j.HasMissingDependenciesF(ctx)
 	}
 	if j.CantHasMissingDependencies && j.T != nil {
-		j.T.Fatal(errHasMissingDependencies)
+		require.FailNow(j.T, errHasMissingDependencies.Error())
 	}
 	return false, errHasMissingDependencies
 }

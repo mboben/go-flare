@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package hierarchycodec
@@ -21,4 +21,9 @@ func TestMultipleTags(t *testing.T) {
 		c := New([]string{"tag1", "tag2"}, defaultMaxSliceLength)
 		test(c, t)
 	}
+}
+
+func FuzzStructUnmarshalHierarchyCodec(f *testing.F) {
+	c := NewDefault()
+	codec.FuzzStructUnmarshal(c, f)
 }

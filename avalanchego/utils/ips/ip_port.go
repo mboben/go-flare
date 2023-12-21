@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package ips
@@ -8,9 +8,48 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+
+	"github.com/ava-labs/avalanchego/utils/wrappers"
 )
 
-var errBadIP = errors.New("bad ip format")
+const nullStr = "null"
+
+var (
+	errMissingQuotes = errors.New("first and last characters should be quotes")
+	errBadIP         = errors.New("bad ip format")
+)
+
+type IPDesc IPPort
+
+func (ipDesc IPDesc) String() string {
+	return IPPort(ipDesc).String()
+}
+
+func (ipDesc IPDesc) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + ipDesc.String() + `"`), nil
+}
+
+func (ipDesc *IPDesc) UnmarshalJSON(b []byte) error {
+	str := string(b)
+	if str == nullStr { // If "null", do nothing
+		return nil
+	} else if len(str) < 2 {
+		return errMissingQuotes
+	}
+
+	lastIndex := len(str) - 1
+	if str[0] != '"' || str[lastIndex] != '"' {
+		return errMissingQuotes
+	}
+
+	ipPort, err := ToIPPort(str[1:lastIndex])
+	if err != nil {
+		return fmt.Errorf("couldn't decode to IPPort: %w", err)
+	}
+	*ipDesc = IPDesc(ipPort)
+
+	return nil
+}
 
 // An IP and a port.
 type IPPort struct {
@@ -23,7 +62,7 @@ func (ipPort IPPort) Equal(other IPPort) bool {
 }
 
 func (ipPort IPPort) String() string {
-	return net.JoinHostPort(ipPort.IP.String(), fmt.Sprintf("%d", ipPort.Port))
+	return net.JoinHostPort(ipPort.IP.String(), strconv.FormatUint(uint64(ipPort.Port), 10))
 }
 
 // IsZero returns if the IP or port is zeroed out
@@ -53,4 +92,10 @@ func ToIPPort(str string) (IPPort, error) {
 		IP:   ip,
 		Port: uint16(port),
 	}, nil
+}
+
+// PackIP packs an ip port pair to the byte array
+func PackIP(p *wrappers.Packer, ip IPPort) {
+	p.PackFixedBytes(ip.IP.To16())
+	p.PackShort(ip.Port)
 }

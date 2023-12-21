@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package memdb
@@ -13,6 +13,18 @@ func TestInterface(t *testing.T) {
 	for _, test := range database.Tests {
 		test(t, New())
 	}
+}
+
+func FuzzKeyValue(f *testing.F) {
+	database.FuzzKeyValue(f, New())
+}
+
+func FuzzNewIteratorWithPrefix(f *testing.F) {
+	database.FuzzNewIteratorWithPrefix(f, New())
+}
+
+func FuzzNewIteratorWithStartAndPrefix(f *testing.F) {
+	database.FuzzNewIteratorWithStartAndPrefix(f, New())
 }
 
 func BenchmarkInterface(b *testing.B) {

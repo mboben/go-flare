@@ -1,14 +1,15 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package proposer
 
 import (
-	"sort"
+	"context"
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/validators"
+	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/math"
 	"github.com/ava-labs/avalanchego/utils/sampler"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
@@ -16,18 +17,37 @@ import (
 
 // Proposer list constants
 const (
-	MaxWindows     = 6
 	WindowDuration = 5 * time.Second
-	MaxDelay       = MaxWindows * WindowDuration
+
+	MaxVerifyWindows = 6
+	MaxVerifyDelay   = MaxVerifyWindows * WindowDuration // 30 seconds
+
+	MaxBuildWindows = 60
+	MaxBuildDelay   = MaxBuildWindows * WindowDuration // 5 minutes
 )
 
-var _ Windower = &windower{}
+var _ Windower = (*windower)(nil)
 
 type Windower interface {
+	// Proposers returns the proposer list for building a block at [chainHeight]
+	// when the validator set is defined at [pChainHeight]. The list is returned
+	// in order. The minimum delay of a validator is the index they appear times
+	// [WindowDuration].
+	Proposers(
+		ctx context.Context,
+		chainHeight,
+		pChainHeight uint64,
+		maxWindows int,
+	) ([]ids.NodeID, error)
+	// Delay returns the amount of time that [validatorID] must wait before
+	// building a block at [chainHeight] when the validator set is defined at
+	// [pChainHeight].
 	Delay(
+		ctx context.Context,
 		chainHeight,
 		pChainHeight uint64,
 		validatorID ids.NodeID,
+		maxWindows int,
 	) (time.Duration, error)
 }
 
@@ -50,28 +70,24 @@ func New(state validators.State, subnetID, chainID ids.ID) Windower {
 	}
 }
 
-func (w *windower) Delay(chainHeight, pChainHeight uint64, validatorID ids.NodeID) (time.Duration, error) {
-	if validatorID == ids.EmptyNodeID {
-		return MaxDelay, nil
-	}
-
+func (w *windower) Proposers(ctx context.Context, chainHeight, pChainHeight uint64, maxWindows int) ([]ids.NodeID, error) {
 	// get the validator set by the p-chain height
-	validatorsMap, err := w.state.GetValidatorSet(pChainHeight, w.subnetID)
+	validatorsMap, err := w.state.GetValidatorSet(ctx, pChainHeight, w.subnetID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	// convert the map of validators to a slice
-	validators := make(validatorsSlice, 0, len(validatorsMap))
+	validators := make([]validatorData, 0, len(validatorsMap))
 	weight := uint64(0)
 	for k, v := range validatorsMap {
 		validators = append(validators, validatorData{
 			id:     k,
-			weight: v,
+			weight: v.Weight,
 		})
-		newWeight, err := math.Add64(weight, v)
+		newWeight, err := math.Add64(weight, v.Weight)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		weight = newWeight
 	}
@@ -79,7 +95,7 @@ func (w *windower) Delay(chainHeight, pChainHeight uint64, validatorID ids.NodeI
 	// canonically sort validators
 	// Note: validators are sorted by ID, sorting by weight would not create a
 	// canonically sorted list
-	sort.Sort(validators)
+	utils.Sort(validators)
 
 	// convert the slice of validators to a slice of weights
 	validatorWeights := make([]uint64, len(validators))
@@ -88,10 +104,10 @@ func (w *windower) Delay(chainHeight, pChainHeight uint64, validatorID ids.NodeI
 	}
 
 	if err := w.sampler.Initialize(validatorWeights); err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	numToSample := MaxWindows
+	numToSample := maxWindows
 	if weight < uint64(numToSample) {
 		numToSample = int(weight)
 	}
@@ -101,12 +117,28 @@ func (w *windower) Delay(chainHeight, pChainHeight uint64, validatorID ids.NodeI
 
 	indices, err := w.sampler.Sample(numToSample)
 	if err != nil {
+		return nil, err
+	}
+
+	nodeIDs := make([]ids.NodeID, numToSample)
+	for i, index := range indices {
+		nodeIDs[i] = validators[index].id
+	}
+	return nodeIDs, nil
+}
+
+func (w *windower) Delay(ctx context.Context, chainHeight, pChainHeight uint64, validatorID ids.NodeID, maxWindows int) (time.Duration, error) {
+	if validatorID == ids.EmptyNodeID {
+		return time.Duration(maxWindows) * WindowDuration, nil
+	}
+
+	proposers, err := w.Proposers(ctx, chainHeight, pChainHeight, maxWindows)
+	if err != nil {
 		return 0, err
 	}
 
 	delay := time.Duration(0)
-	for _, index := range indices {
-		nodeID := validators[index].id
+	for _, nodeID := range proposers {
 		if nodeID == validatorID {
 			return delay, nil
 		}

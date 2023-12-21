@@ -1,10 +1,9 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package metrics
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -28,14 +27,12 @@ func TestMultiGathererDuplicatedPrefix(t *testing.T) {
 	g := NewMultiGatherer()
 	og := NewOptionalGatherer()
 
+	require.NoError(g.Register("", og))
+
 	err := g.Register("", og)
-	require.NoError(err)
+	require.ErrorIs(err, errReregisterGatherer)
 
-	err = g.Register("", og)
-	require.Equal(errDuplicatedPrefix, err)
-
-	err = g.Register("lol", og)
-	require.NoError(err)
+	require.NoError(g.Register("lol", og))
 }
 
 func TestMultiGathererAddedError(t *testing.T) {
@@ -43,16 +40,14 @@ func TestMultiGathererAddedError(t *testing.T) {
 
 	g := NewMultiGatherer()
 
-	expected := errors.New(":(")
 	tg := &testGatherer{
-		err: expected,
+		err: errTest,
 	}
 
-	err := g.Register("", tg)
-	require.NoError(err)
+	require.NoError(g.Register("", tg))
 
 	mfs, err := g.Gather()
-	require.Equal(expected, err)
+	require.ErrorIs(err, errTest)
 	require.Empty(mfs)
 }
 
@@ -67,8 +62,7 @@ func TestMultiGathererNoAddedPrefix(t *testing.T) {
 		}},
 	}
 
-	err := g.Register("", tg)
-	require.NoError(err)
+	require.NoError(g.Register("", tg))
 
 	mfs, err := g.Gather()
 	require.NoError(err)
@@ -87,8 +81,7 @@ func TestMultiGathererAddedPrefix(t *testing.T) {
 		}},
 	}
 
-	err := g.Register(hello, tg)
-	require.NoError(err)
+	require.NoError(g.Register(hello, tg))
 
 	mfs, err := g.Gather()
 	require.NoError(err)
@@ -105,8 +98,7 @@ func TestMultiGathererJustPrefix(t *testing.T) {
 		mfs: []*dto.MetricFamily{{}},
 	}
 
-	err := g.Register(hello, tg)
-	require.NoError(err)
+	require.NoError(g.Register(hello, tg))
 
 	mfs, err := g.Gather()
 	require.NoError(err)
@@ -132,8 +124,7 @@ func TestMultiGathererSorted(t *testing.T) {
 		},
 	}
 
-	err := g.Register("", tg)
-	require.NoError(err)
+	require.NoError(g.Register("", tg))
 
 	mfs, err := g.Gather()
 	require.NoError(err)

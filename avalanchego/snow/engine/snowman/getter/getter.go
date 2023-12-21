@@ -1,9 +1,14 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package getter
 
 import (
+	"context"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/ids"
@@ -13,22 +18,28 @@ import (
 	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/metric"
+	"github.com/ava-labs/avalanchego/utils/set"
 )
 
 // Get requests are always served, regardless node state (bootstrapping or normal operations).
-var _ common.AllGetsServer = &getter{}
+var _ common.AllGetsServer = (*getter)(nil)
 
 func New(
 	vm block.ChainVM,
-	commonCfg common.Config,
+	sender common.Sender,
+	log logging.Logger,
+	maxTimeGetAncestors time.Duration,
+	maxContainersGetAncestors int,
+	reg prometheus.Registerer,
 ) (common.AllGetsServer, error) {
 	ssVM, _ := vm.(block.StateSyncableVM)
 	gh := &getter{
-		vm:     vm,
-		ssVM:   ssVM,
-		sender: commonCfg.Sender,
-		cfg:    commonCfg,
-		log:    commonCfg.Ctx.Log,
+		vm:                        vm,
+		ssVM:                      ssVM,
+		sender:                    sender,
+		log:                       log,
+		maxTimeGetAncestors:       maxTimeGetAncestors,
+		maxContainersGetAncestors: maxContainersGetAncestors,
 	}
 
 	var err error
@@ -36,22 +47,27 @@ func New(
 		"bs",
 		"get_ancestors_blks",
 		"blocks fetched in a call to GetAncestors",
-		commonCfg.Ctx.Registerer,
+		reg,
 	)
 	return gh, err
 }
 
 type getter struct {
-	vm     block.ChainVM
-	ssVM   block.StateSyncableVM // can be nil
-	sender common.Sender
-	cfg    common.Config
+	vm   block.ChainVM
+	ssVM block.StateSyncableVM // can be nil
 
-	log              logging.Logger
+	sender common.Sender
+	log    logging.Logger
+	// Max time to spend fetching a container and its ancestors when responding
+	// to a GetAncestors
+	maxTimeGetAncestors time.Duration
+	// Max number of containers in an ancestors message sent by this node.
+	maxContainersGetAncestors int
+
 	getAncestorsBlks metric.Averager
 }
 
-func (gh *getter) GetStateSummaryFrontier(nodeID ids.NodeID, requestID uint32) error {
+func (gh *getter) GetStateSummaryFrontier(ctx context.Context, nodeID ids.NodeID, requestID uint32) error {
 	// Note: we do not check if gh.ssVM.StateSyncEnabled since we want all
 	// nodes, including those disabling state sync to serve state summaries if
 	// these are available
@@ -64,7 +80,7 @@ func (gh *getter) GetStateSummaryFrontier(nodeID ids.NodeID, requestID uint32) e
 		return nil
 	}
 
-	summary, err := gh.ssVM.GetLastStateSummary()
+	summary, err := gh.ssVM.GetLastStateSummary(ctx)
 	if err != nil {
 		gh.log.Debug("dropping GetStateSummaryFrontier message",
 			zap.String("reason", "couldn't get state summary frontier"),
@@ -75,15 +91,15 @@ func (gh *getter) GetStateSummaryFrontier(nodeID ids.NodeID, requestID uint32) e
 		return nil
 	}
 
-	gh.sender.SendStateSummaryFrontier(nodeID, requestID, summary.Bytes())
+	gh.sender.SendStateSummaryFrontier(ctx, nodeID, requestID, summary.Bytes())
 	return nil
 }
 
-func (gh *getter) GetAcceptedStateSummary(nodeID ids.NodeID, requestID uint32, heights []uint64) error {
+func (gh *getter) GetAcceptedStateSummary(ctx context.Context, nodeID ids.NodeID, requestID uint32, heights set.Set[uint64]) error {
 	// If there are no requested heights, then we can return the result
 	// immediately, regardless of if the underlying VM implements state sync.
-	if len(heights) == 0 {
-		gh.sender.SendAcceptedStateSummary(nodeID, requestID, nil)
+	if heights.Len() == 0 {
+		gh.sender.SendAcceptedStateSummary(ctx, nodeID, requestID, nil)
 		return nil
 	}
 
@@ -99,9 +115,9 @@ func (gh *getter) GetAcceptedStateSummary(nodeID ids.NodeID, requestID uint32, h
 		return nil
 	}
 
-	summaryIDs := make([]ids.ID, 0, len(heights))
-	for _, height := range heights {
-		summary, err := gh.ssVM.GetStateSummary(height)
+	summaryIDs := make([]ids.ID, 0, heights.Len())
+	for height := range heights {
+		summary, err := gh.ssVM.GetStateSummary(ctx, height)
 		if err == block.ErrStateSyncableVMNotImplemented {
 			gh.log.Debug("dropping GetAcceptedStateSummary message",
 				zap.String("reason", "state sync not supported"),
@@ -120,37 +136,40 @@ func (gh *getter) GetAcceptedStateSummary(nodeID ids.NodeID, requestID uint32, h
 		summaryIDs = append(summaryIDs, summary.ID())
 	}
 
-	gh.sender.SendAcceptedStateSummary(nodeID, requestID, summaryIDs)
+	gh.sender.SendAcceptedStateSummary(ctx, nodeID, requestID, summaryIDs)
 	return nil
 }
 
-func (gh *getter) GetAcceptedFrontier(nodeID ids.NodeID, requestID uint32) error {
-	lastAccepted, err := gh.vm.LastAccepted()
+func (gh *getter) GetAcceptedFrontier(ctx context.Context, nodeID ids.NodeID, requestID uint32) error {
+	lastAccepted, err := gh.vm.LastAccepted(ctx)
 	if err != nil {
 		return err
 	}
-	gh.sender.SendAcceptedFrontier(nodeID, requestID, []ids.ID{lastAccepted})
+	gh.sender.SendAcceptedFrontier(ctx, nodeID, requestID, lastAccepted)
 	return nil
 }
 
-func (gh *getter) GetAccepted(nodeID ids.NodeID, requestID uint32, containerIDs []ids.ID) error {
-	acceptedIDs := make([]ids.ID, 0, len(containerIDs))
-	for _, blkID := range containerIDs {
-		if blk, err := gh.vm.GetBlock(blkID); err == nil && blk.Status() == choices.Accepted {
+func (gh *getter) GetAccepted(ctx context.Context, nodeID ids.NodeID, requestID uint32, containerIDs set.Set[ids.ID]) error {
+	acceptedIDs := make([]ids.ID, 0, containerIDs.Len())
+	for blkID := range containerIDs {
+		blk, err := gh.vm.GetBlock(ctx, blkID)
+		if err == nil && blk.Status() == choices.Accepted {
 			acceptedIDs = append(acceptedIDs, blkID)
 		}
 	}
-	gh.sender.SendAccepted(nodeID, requestID, acceptedIDs)
+	gh.sender.SendAccepted(ctx, nodeID, requestID, acceptedIDs)
 	return nil
 }
 
-func (gh *getter) GetAncestors(nodeID ids.NodeID, requestID uint32, blkID ids.ID) error {
+func (gh *getter) GetAncestors(ctx context.Context, nodeID ids.NodeID, requestID uint32, blkID ids.ID) error {
 	ancestorsBytes, err := block.GetAncestors(
+		ctx,
+		gh.log,
 		gh.vm,
 		blkID,
-		gh.cfg.AncestorsMaxContainersSent,
+		gh.maxContainersGetAncestors,
 		constants.MaxContainersLen,
-		gh.cfg.MaxTimeGetAncestors,
+		gh.maxTimeGetAncestors,
 	)
 	if err != nil {
 		gh.log.Verbo("dropping GetAncestors message",
@@ -164,12 +183,12 @@ func (gh *getter) GetAncestors(nodeID ids.NodeID, requestID uint32, blkID ids.ID
 	}
 
 	gh.getAncestorsBlks.Observe(float64(len(ancestorsBytes)))
-	gh.sender.SendAncestors(nodeID, requestID, ancestorsBytes)
+	gh.sender.SendAncestors(ctx, nodeID, requestID, ancestorsBytes)
 	return nil
 }
 
-func (gh *getter) Get(nodeID ids.NodeID, requestID uint32, blkID ids.ID) error {
-	blk, err := gh.vm.GetBlock(blkID)
+func (gh *getter) Get(ctx context.Context, nodeID ids.NodeID, requestID uint32, blkID ids.ID) error {
+	blk, err := gh.vm.GetBlock(ctx, blkID)
 	if err != nil {
 		// If we failed to get the block, that means either an unexpected error
 		// has occurred, [vdr] is not following the protocol, or the
@@ -184,6 +203,6 @@ func (gh *getter) Get(nodeID ids.NodeID, requestID uint32, blkID ids.ID) error {
 	}
 
 	// Respond to the validator with the fetched block and the same requestID.
-	gh.sender.SendPut(nodeID, requestID, blkID, blk.Bytes())
+	gh.sender.SendPut(ctx, nodeID, requestID, blk.Bytes())
 	return nil
 }

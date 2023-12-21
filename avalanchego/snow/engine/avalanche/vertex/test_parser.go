@@ -1,11 +1,14 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package vertex
 
 import (
+	"context"
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/snow/consensus/avalanche"
 )
@@ -13,23 +16,25 @@ import (
 var (
 	errParse = errors.New("unexpectedly called Parse")
 
-	_ Parser = &TestParser{}
+	_ Parser = (*TestParser)(nil)
 )
 
 type TestParser struct {
 	T            *testing.T
 	CantParseVtx bool
-	ParseVtxF    func([]byte) (avalanche.Vertex, error)
+	ParseVtxF    func(context.Context, []byte) (avalanche.Vertex, error)
 }
 
-func (p *TestParser) Default(cant bool) { p.CantParseVtx = cant }
+func (p *TestParser) Default(cant bool) {
+	p.CantParseVtx = cant
+}
 
-func (p *TestParser) ParseVtx(b []byte) (avalanche.Vertex, error) {
+func (p *TestParser) ParseVtx(ctx context.Context, b []byte) (avalanche.Vertex, error) {
 	if p.ParseVtxF != nil {
-		return p.ParseVtxF(b)
+		return p.ParseVtxF(ctx, b)
 	}
 	if p.CantParseVtx && p.T != nil {
-		p.T.Fatal(errParse)
+		require.FailNow(p.T, errParse.Error())
 	}
 	return nil, errParse
 }

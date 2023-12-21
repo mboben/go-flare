@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package snowball
@@ -8,19 +8,30 @@ import (
 	"strings"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/utils/bag"
 )
 
 var (
-	_ Factory   = &TreeFactory{}
-	_ Consensus = &Tree{}
-	_ node      = &unaryNode{}
-	_ node      = &binaryNode{}
+	_ Consensus = (*Tree)(nil)
+	_ node      = (*unaryNode)(nil)
+	_ node      = (*binaryNode)(nil)
 )
 
-// TreeFactory implements Factory by returning a tree struct
-type TreeFactory struct{}
+func NewTree(params Parameters, choice ids.ID) Consensus {
+	snowball := newUnarySnowball(params.BetaVirtuous)
 
-func (TreeFactory) New() Consensus { return &Tree{} }
+	t := &Tree{
+		params: params,
+	}
+	t.node = &unaryNode{
+		tree:         t,
+		preference:   choice,
+		commonPrefix: ids.NumBits, // The initial state has no conflicts
+		snowball:     &snowball,
+	}
+
+	return t
+}
 
 // Tree implements the snowball interface by using a modified patricia tree.
 type Tree struct {
@@ -43,22 +54,6 @@ type Tree struct {
 	shouldReset bool
 }
 
-func (t *Tree) Initialize(params Parameters, choice ids.ID) {
-	t.params = params
-
-	snowball := &unarySnowball{}
-	snowball.Initialize(params.BetaVirtuous)
-
-	t.node = &unaryNode{
-		tree:         t,
-		preference:   choice,
-		commonPrefix: ids.NumBits, // The initial state has no conflicts
-		snowball:     snowball,
-	}
-}
-
-func (t *Tree) Parameters() Parameters { return t.params }
-
 func (t *Tree) Add(choice ids.ID) {
 	prefix := t.node.DecidedPrefix()
 	// Make sure that we haven't already decided against this new id
@@ -67,13 +62,16 @@ func (t *Tree) Add(choice ids.ID) {
 	}
 }
 
-func (t *Tree) RecordPoll(votes ids.Bag) bool {
+func (t *Tree) RecordPoll(votes bag.Bag[ids.ID]) bool {
 	// Get the assumed decided prefix of the root node.
 	decidedPrefix := t.node.DecidedPrefix()
 
 	// If any of the bits differ from the preference in this prefix, the vote is
 	// for a rejected operation. So, we filter out these invalid votes.
-	filteredVotes := votes.Filter(0, decidedPrefix, t.Preference())
+	preference := t.Preference()
+	filteredVotes := votes.Filter(func(id ids.ID) bool {
+		return ids.EqualSubset(0, decidedPrefix, preference, id)
+	})
 
 	// Now that the votes have been restricted to valid votes, pass them into
 	// the first snowball instance
@@ -86,10 +84,12 @@ func (t *Tree) RecordPoll(votes ids.Bag) bool {
 	return successful
 }
 
-func (t *Tree) RecordUnsuccessfulPoll() { t.shouldReset = true }
+func (t *Tree) RecordUnsuccessfulPoll() {
+	t.shouldReset = true
+}
 
 func (t *Tree) String() string {
-	builder := strings.Builder{}
+	sb := strings.Builder{}
 
 	prefixes := []string{""}
 	nodes := []node{t.node}
@@ -105,9 +105,9 @@ func (t *Tree) String() string {
 
 		s, newNodes := node.Printable()
 
-		builder.WriteString(prefix)
-		builder.WriteString(s)
-		builder.WriteString("\n")
+		sb.WriteString(prefix)
+		sb.WriteString(s)
+		sb.WriteString("\n")
 
 		newPrefix := prefix + "    "
 		for range newNodes {
@@ -116,7 +116,7 @@ func (t *Tree) String() string {
 		nodes = append(nodes, newNodes...)
 	}
 
-	return strings.TrimSuffix(builder.String(), "\n")
+	return strings.TrimSuffix(sb.String(), "\n")
 }
 
 type node interface {
@@ -129,7 +129,7 @@ type node interface {
 	Add(newChoice ids.ID) node
 	// Apply the votes, reset the model if needed
 	// Returns the new node and whether the vote was successful
-	RecordPoll(votes ids.Bag, shouldReset bool) (newChild node, successful bool)
+	RecordPoll(votes bag.Bag[ids.ID], shouldReset bool) (newChild node, successful bool)
 	// Returns true if consensus has been reached on this node
 	Finalized() bool
 
@@ -165,18 +165,26 @@ type unaryNode struct {
 	child node
 }
 
-func (u *unaryNode) Preference() ids.ID { return u.preference }
-func (u *unaryNode) DecidedPrefix() int { return u.decidedPrefix }
+func (u *unaryNode) Preference() ids.ID {
+	return u.preference
+}
 
+func (u *unaryNode) DecidedPrefix() int {
+	return u.decidedPrefix
+}
+
+//nolint:gofmt,gofumpt,goimports // this comment is formatted as intended
+//
 // This is by far the most complicated function in this algorithm.
 // The intuition is that this instance represents a series of consecutive unary
 // snowball instances, and this function's purpose is convert one of these unary
 // snowball instances into a binary snowball instance.
 // There are 5 possible cases.
-// 1. None of these instances should be split, we should attempt to split a
-//    child
 //
-//        For example, attempting to insert the value "00001" in this node:
+//  1. None of these instances should be split, we should attempt to split a
+//     child
+//
+//     For example, attempting to insert the value "00001" in this node:
 //
 //                       +-------------------+ <-- This node will not be split
 //                       |                   |
@@ -186,7 +194,7 @@ func (u *unaryNode) DecidedPrefix() int { return u.decidedPrefix }
 //                                 ^
 //                                 |
 //
-//        Results in:
+//     Results in:
 //
 //                       +-------------------+
 //                       |                   |
@@ -196,13 +204,14 @@ func (u *unaryNode) DecidedPrefix() int { return u.decidedPrefix }
 //                                 ^
 //                                 |
 //
-// 2. This instance represents a series of only one unary instance and it must
-//    be split
-//       This will return a binary choice, with one child the same as my child,
-//       and another (possibly nil child) representing a new chain to the end of
-//       the hash
+//  2. This instance represents a series of only one unary instance and it must
+//     be split.
 //
-//        For example, attempting to insert the value "1" in this tree:
+//     This will return a binary choice, with one child the same as my child,
+//     and another (possibly nil child) representing a new chain to the end of
+//     the hash
+//
+//     For example, attempting to insert the value "1" in this tree:
 //
 //                       +-------------------+
 //                       |                   |
@@ -210,7 +219,7 @@ func (u *unaryNode) DecidedPrefix() int { return u.decidedPrefix }
 //                       |                   |
 //                       +-------------------+
 //
-//        Results in:
+//     Results in:
 //
 //                       +-------------------+
 //                       |         |         |
@@ -218,12 +227,13 @@ func (u *unaryNode) DecidedPrefix() int { return u.decidedPrefix }
 //                       |         |         |
 //                       +-------------------+
 //
-// 3. This instance must be split on the first bit
-//       This will return a binary choice, with one child equal to this instance
-//       with decidedPrefix increased by one, and another representing a new
-//       chain to the end of the hash
+//  3. This instance must be split on the first bit
 //
-//        For example, attempting to insert the value "10" in this tree:
+//     This will return a binary choice, with one child equal to this instance
+//     with decidedPrefix increased by one, and another representing a new
+//     chain to the end of the hash
+//
+//     For example, attempting to insert the value "10" in this tree:
 //
 //                       +-------------------+
 //                       |                   |
@@ -231,7 +241,7 @@ func (u *unaryNode) DecidedPrefix() int { return u.decidedPrefix }
 //                       |                   |
 //                       +-------------------+
 //
-//        Results in:
+//     Results in:
 //
 //                       +-------------------+
 //                       |         |         |
@@ -246,13 +256,14 @@ func (u *unaryNode) DecidedPrefix() int { return u.decidedPrefix }
 //            |                   | |                   |
 //            +-------------------+ +-------------------+
 //
-// 4. This instance must be split on the last bit
-//       This will modify this unary choice. The commonPrefix is decreased by
-//       one. The child is set to a binary instance that has a child equal to
-//       the current child and another child equal to a new unary instance to
-//       the end of the hash
+//  4. This instance must be split on the last bit
 //
-//        For example, attempting to insert the value "01" in this tree:
+//     This will modify this unary choice. The commonPrefix is decreased by
+//     one. The child is set to a binary instance that has a child equal to
+//     the current child and another child equal to a new unary instance to
+//     the end of the hash
+//
+//     For example, attempting to insert the value "01" in this tree:
 //
 //                       +-------------------+
 //                       |                   |
@@ -260,7 +271,7 @@ func (u *unaryNode) DecidedPrefix() int { return u.decidedPrefix }
 //                       |                   |
 //                       +-------------------+
 //
-//        Results in:
+//     Results in:
 //
 //                       +-------------------+
 //                       |                   |
@@ -275,14 +286,15 @@ func (u *unaryNode) DecidedPrefix() int { return u.decidedPrefix }
 //                       |         |         |
 //                       +-------------------+
 //
-// 5. This instance must be split on an interior bit
-//       This will modify this unary choice. The commonPrefix is set to the
-//       interior bit. The child is set to a binary instance that has a child
-//       equal to this unary choice with the decidedPrefix equal to the interior
-//       bit and another child equal to a new unary instance to the end of the
-//       hash
+//  5. This instance must be split on an interior bit
 //
-//        For example, attempting to insert the value "010" in this tree:
+//     This will modify this unary choice. The commonPrefix is set to the
+//     interior bit. The child is set to a binary instance that has a child
+//     equal to this unary choice with the decidedPrefix equal to the interior
+//     bit and another child equal to a new unary instance to the end of the
+//     hash
+//
+//     For example, attempting to insert the value "010" in this tree:
 //
 //                       +-------------------+
 //                       |                   |
@@ -290,7 +302,7 @@ func (u *unaryNode) DecidedPrefix() int { return u.decidedPrefix }
 //                       |                   |
 //                       +-------------------+
 //
-//        Results in:
+//     Results in:
 //
 //                       +-------------------+
 //                       |                   |
@@ -316,8 +328,8 @@ func (u *unaryNode) Add(newChoice ids.ID) node {
 		return u // Only happens if the tree is finalized, or it's a leaf node
 	}
 
-	if index, found := ids.FirstDifferenceSubset(
-		u.decidedPrefix, u.commonPrefix, u.preference, newChoice); !found {
+	index, found := ids.FirstDifferenceSubset(u.decidedPrefix, u.commonPrefix, u.preference, newChoice)
+	if !found {
 		// If the first difference doesn't exist, then this node shouldn't be
 		// split
 		if u.child != nil {
@@ -328,72 +340,70 @@ func (u *unaryNode) Add(newChoice ids.ID) node {
 		}
 		// if u.child is nil, then we are attempting to add the same choice into
 		// the tree, which should be a noop
-	} else {
-		// The difference was found, so this node must be split
+		return u
+	}
 
-		bit := u.preference.Bit(uint(index)) // The currently preferred bit
-		b := &binaryNode{
-			tree:        u.tree,
-			bit:         index,
-			snowball:    u.snowball.Extend(u.tree.params.BetaRogue, bit),
-			shouldReset: [2]bool{u.shouldReset, u.shouldReset},
+	// The difference was found, so this node must be split
+	bit := u.preference.Bit(uint(index)) // The currently preferred bit
+	b := &binaryNode{
+		tree:        u.tree,
+		bit:         index,
+		snowball:    u.snowball.Extend(u.tree.params.BetaRogue, bit),
+		shouldReset: [2]bool{u.shouldReset, u.shouldReset},
+	}
+	b.preferences[bit] = u.preference
+	b.preferences[1-bit] = newChoice
+
+	newChildSnowball := newUnarySnowball(u.tree.params.BetaVirtuous)
+	newChild := &unaryNode{
+		tree:          u.tree,
+		preference:    newChoice,
+		decidedPrefix: index + 1,   // The new child assumes this branch has decided in it's favor
+		commonPrefix:  ids.NumBits, // The new child has no conflicts under this branch
+		snowball:      &newChildSnowball,
+	}
+
+	switch {
+	case u.decidedPrefix == u.commonPrefix-1:
+		// This node was only voting over one bit. (Case 2. from above)
+		b.children[bit] = u.child
+		if u.child != nil {
+			b.children[1-bit] = newChild
 		}
-		b.preferences[bit] = u.preference
-		b.preferences[1-bit] = newChoice
-
-		newChildSnowball := &unarySnowball{}
-		newChildSnowball.Initialize(u.tree.params.BetaVirtuous)
-		newChild := &unaryNode{
+		return b
+	case index == u.decidedPrefix:
+		// This node was split on the first bit. (Case 3. from above)
+		u.decidedPrefix++
+		b.children[bit] = u
+		b.children[1-bit] = newChild
+		return b
+	case index == u.commonPrefix-1:
+		// This node was split on the last bit. (Case 4. from above)
+		u.commonPrefix--
+		b.children[bit] = u.child
+		if u.child != nil {
+			b.children[1-bit] = newChild
+		}
+		u.child = b
+		return u
+	default:
+		// This node was split on an interior bit. (Case 5. from above)
+		originalDecidedPrefix := u.decidedPrefix
+		u.decidedPrefix = index + 1
+		b.children[bit] = u
+		b.children[1-bit] = newChild
+		return &unaryNode{
 			tree:          u.tree,
-			preference:    newChoice,
-			decidedPrefix: index + 1,   // The new child assumes this branch has decided in it's favor
-			commonPrefix:  ids.NumBits, // The new child has no conflicts under this branch
-			snowball:      newChildSnowball,
-		}
-
-		switch {
-		case u.decidedPrefix == u.commonPrefix-1:
-			// This node was only voting over one bit. (Case 2. from above)
-			b.children[bit] = u.child
-			if u.child != nil {
-				b.children[1-bit] = newChild
-			}
-			return b
-		case index == u.decidedPrefix:
-			// This node was split on the first bit. (Case 3. from above)
-			u.decidedPrefix++
-			b.children[bit] = u
-			b.children[1-bit] = newChild
-			return b
-		case index == u.commonPrefix-1:
-			// This node was split on the last bit. (Case 4. from above)
-			u.commonPrefix--
-			b.children[bit] = u.child
-			if u.child != nil {
-				b.children[1-bit] = newChild
-			}
-			u.child = b
-			return u
-		default:
-			// This node was split on an interior bit. (Case 5. from above)
-			originalDecidedPrefix := u.decidedPrefix
-			u.decidedPrefix = index + 1
-			b.children[bit] = u
-			b.children[1-bit] = newChild
-			return &unaryNode{
-				tree:          u.tree,
-				preference:    u.preference,
-				decidedPrefix: originalDecidedPrefix,
-				commonPrefix:  index,
-				snowball:      u.snowball.Clone(),
-				child:         b,
-			}
+			preference:    u.preference,
+			decidedPrefix: originalDecidedPrefix,
+			commonPrefix:  index,
+			snowball:      u.snowball.Clone(),
+			child:         b,
 		}
 	}
-	return u // Do nothing, the choice was already rejected
 }
 
-func (u *unaryNode) RecordPoll(votes ids.Bag, reset bool) (node, bool) {
+func (u *unaryNode) RecordPoll(votes bag.Bag[ids.ID], reset bool) (node, bool) {
 	// We are guaranteed that the votes are of IDs that have previously been
 	// added. This ensures that the provided votes all have the same bits in the
 	// range [u.decidedPrefix, u.commonPrefix) as in u.preference.
@@ -404,16 +414,21 @@ func (u *unaryNode) RecordPoll(votes ids.Bag, reset bool) (node, bool) {
 		u.shouldReset = true // Make sure my child is also reset correctly
 	}
 
-	if votes.Len() < u.tree.params.Alpha {
+	switch numVotes := votes.Len(); {
+	case numVotes >= u.tree.params.AlphaConfidence:
+		// I got enough votes to increase my confidence
+		u.snowball.RecordSuccessfulPoll()
+	case numVotes >= u.tree.params.AlphaPreference:
+		// I got enough votes to update my preference, but not increase my
+		// confidence.
+		u.snowball.RecordPollPreference()
+	default:
 		// I didn't get enough votes, I must reset and my child must reset as
 		// well
 		u.snowball.RecordUnsuccessfulPoll()
 		u.shouldReset = true
 		return u, false
 	}
-
-	// I got enough votes this time
-	u.snowball.RecordSuccessfulPoll()
 
 	if u.child != nil {
 		// We are guaranteed that u.commonPrefix will equal
@@ -439,7 +454,9 @@ func (u *unaryNode) RecordPoll(votes ids.Bag, reset bool) (node, bool) {
 	return u, true
 }
 
-func (u *unaryNode) Finalized() bool { return u.snowball.Finalized() }
+func (u *unaryNode) Finalized() bool {
+	return u.snowball.Finalized()
+}
 
 func (u *unaryNode) Printable() (string, []node) {
 	s := fmt.Sprintf("%s Bits = [%d, %d)",
@@ -475,8 +492,13 @@ type binaryNode struct {
 	children [2]node
 }
 
-func (b *binaryNode) Preference() ids.ID { return b.preferences[b.snowball.Preference()] }
-func (b *binaryNode) DecidedPrefix() int { return b.bit }
+func (b *binaryNode) Preference() ids.ID {
+	return b.preferences[b.snowball.Preference()]
+}
+
+func (b *binaryNode) DecidedPrefix() int {
+	return b.bit
+}
 
 func (b *binaryNode) Add(id ids.ID) node {
 	bit := id.Bit(uint(b.bit))
@@ -496,14 +518,16 @@ func (b *binaryNode) Add(id ids.ID) node {
 	return b
 }
 
-func (b *binaryNode) RecordPoll(votes ids.Bag, reset bool) (node, bool) {
+func (b *binaryNode) RecordPoll(votes bag.Bag[ids.ID], reset bool) (node, bool) {
 	// The list of votes we are passed is split into votes for bit 0 and votes
 	// for bit 1
-	splitVotes := votes.Split(uint(b.bit))
+	splitVotes := votes.Split(func(id ids.ID) bool {
+		return id.Bit(uint(b.bit)) == 1
+	})
 
 	bit := 0
 	// We only care about which bit is set if a successful poll can happen
-	if splitVotes[1].Len() >= b.tree.params.Alpha {
+	if splitVotes[1].Len() >= b.tree.params.AlphaPreference {
 		bit = 1
 	}
 
@@ -515,21 +539,28 @@ func (b *binaryNode) RecordPoll(votes ids.Bag, reset bool) (node, bool) {
 	b.shouldReset[1-bit] = true // They didn't get the threshold of votes
 
 	prunedVotes := splitVotes[bit]
-	if prunedVotes.Len() < b.tree.params.Alpha {
+	switch numVotes := prunedVotes.Len(); {
+	case numVotes >= b.tree.params.AlphaConfidence:
+		// I got enough votes to increase my confidence.
+		b.snowball.RecordSuccessfulPoll(bit)
+	case numVotes >= b.tree.params.AlphaPreference:
+		// I got enough votes to update my preference, but not increase my
+		// confidence.
+		b.snowball.RecordPollPreference(bit)
+	default:
 		b.snowball.RecordUnsuccessfulPoll()
 		// The winning child didn't get enough votes either
 		b.shouldReset[bit] = true
 		return b, false
 	}
 
-	// This bit got alpha votes, it was a successful poll
-	b.snowball.RecordSuccessfulPoll(bit)
-
 	if child := b.children[bit]; child != nil {
 		// The votes are filtered to ensure that they are votes that should
 		// count for the child
-		filteredVotes := prunedVotes.Filter(
-			b.bit+1, child.DecidedPrefix(), b.preferences[bit])
+		decidedPrefix := child.DecidedPrefix()
+		filteredVotes := prunedVotes.Filter(func(id ids.ID) bool {
+			return ids.EqualSubset(b.bit+1, decidedPrefix, b.preferences[bit], id)
+		})
 
 		newChild, _ := child.RecordPoll(filteredVotes, b.shouldReset[bit])
 		if b.snowball.Finalized() {
@@ -544,7 +575,9 @@ func (b *binaryNode) RecordPoll(votes ids.Bag, reset bool) (node, bool) {
 	return b, true
 }
 
-func (b *binaryNode) Finalized() bool { return b.snowball.Finalized() }
+func (b *binaryNode) Finalized() bool {
+	return b.snowball.Finalized()
+}
 
 func (b *binaryNode) Printable() (string, []node) {
 	s := fmt.Sprintf("%s Bit = %d", b.snowball, b.bit)

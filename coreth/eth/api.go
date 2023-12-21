@@ -92,11 +92,11 @@ func (api *AdminAPI) ExportChain(file string, first *uint64, last *uint64) (bool
 	}
 	if _, err := os.Stat(file); err == nil {
 		// File already exists. Allowing overwrite could be a DoS vector,
-		// since the 'file' may point to arbitrary paths on the drive
+		// since the 'file' may point to arbitrary paths on the drive.
 		return false, errors.New("location would overwrite an existing file")
 	}
 	// Make sure we can create the file to export into
-	out, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.ModePerm)
+	out, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return false, err
 	}
@@ -195,16 +195,20 @@ func (api *DebugAPI) DumpBlock(blockNr rpc.BlockNumber) (state.Dump, error) {
 		OnlyWithAddresses: true,
 		Max:               AccountRangeMaxResults, // Sanity limit over RPC
 	}
-	var block *types.Block
+	var header *types.Header
 	if blockNr.IsAccepted() {
-		block = api.eth.LastAcceptedBlock()
+		header = api.eth.LastAcceptedBlock().Header()
 	} else {
-		block = api.eth.blockchain.GetBlockByNumber(uint64(blockNr))
+		block := api.eth.blockchain.GetBlockByNumber(uint64(blockNr))
+		if block == nil {
+			return state.Dump{}, fmt.Errorf("block #%d not found", blockNr)
+		}
+		header = block.Header()
 	}
-	if block == nil {
+	if header == nil {
 		return state.Dump{}, fmt.Errorf("block #%d not found", blockNr)
 	}
-	stateDb, err := api.eth.BlockChain().StateAt(block.Root())
+	stateDb, err := api.eth.BlockChain().StateAt(header.Root)
 	if err != nil {
 		return state.Dump{}, err
 	}
@@ -219,41 +223,11 @@ func (api *DebugAPI) Preimage(ctx context.Context, hash common.Hash) (hexutil.By
 	return nil, errors.New("unknown preimage")
 }
 
-// BadBlockArgs represents the entries in the list returned when bad blocks are queried.
-type BadBlockArgs struct {
-	Hash  common.Hash            `json:"hash"`
-	Block map[string]interface{} `json:"block"`
-	RLP   string                 `json:"rlp"`
-}
-
 // GetBadBlocks returns a list of the last 'bad blocks' that the client has seen on the network
 // and returns them as a JSON list of block hashes.
-func (api *DebugAPI) GetBadBlocks(ctx context.Context) ([]*BadBlockArgs, error) {
-	var (
-		err     error
-		blocks  = api.eth.BlockChain().BadBlocks()
-		results = make([]*BadBlockArgs, 0, len(blocks))
-	)
-	for _, block := range blocks {
-		var (
-			blockRlp  string
-			blockJSON map[string]interface{}
-		)
-		if rlpBytes, err := rlp.EncodeToBytes(block); err != nil {
-			blockRlp = err.Error() // Hacky, but hey, it works
-		} else {
-			blockRlp = fmt.Sprintf("%#x", rlpBytes)
-		}
-		if blockJSON, err = ethapi.RPCMarshalBlock(block, true, true, api.eth.APIBackend.ChainConfig()); err != nil {
-			blockJSON = map[string]interface{}{"error": err.Error()}
-		}
-		results = append(results, &BadBlockArgs{
-			Hash:  block.Hash(),
-			RLP:   blockRlp,
-			Block: blockJSON,
-		})
-	}
-	return results, nil
+func (api *DebugAPI) GetBadBlocks(ctx context.Context) ([]*ethapi.BadBlockArgs, error) {
+	internalAPI := ethapi.NewBlockChainAPI(api.eth.APIBackend)
+	return internalAPI.GetBadBlocks(ctx)
 }
 
 // AccountRangeMaxResults is the maximum number of results to be returned per call
@@ -265,16 +239,20 @@ func (api *DebugAPI) AccountRange(blockNrOrHash rpc.BlockNumberOrHash, start hex
 	var err error
 
 	if number, ok := blockNrOrHash.Number(); ok {
-		var block *types.Block
+		var header *types.Header
 		if number.IsAccepted() {
-			block = api.eth.LastAcceptedBlock()
+			header = api.eth.LastAcceptedBlock().Header()
 		} else {
-			block = api.eth.blockchain.GetBlockByNumber(uint64(number))
+			block := api.eth.blockchain.GetBlockByNumber(uint64(number))
+			if block == nil {
+				return state.IteratorDump{}, fmt.Errorf("block #%d not found", number)
+			}
+			header = block.Header()
 		}
-		if block == nil {
+		if header == nil {
 			return state.IteratorDump{}, fmt.Errorf("block #%d not found", number)
 		}
-		stateDb, err = api.eth.BlockChain().StateAt(block.Root())
+		stateDb, err = api.eth.BlockChain().StateAt(header.Root)
 		if err != nil {
 			return state.IteratorDump{}, err
 		}
@@ -318,17 +296,22 @@ type storageEntry struct {
 }
 
 // StorageRangeAt returns the storage at the given block height and transaction index.
-func (api *DebugAPI) StorageRangeAt(blockHash common.Hash, txIndex int, contractAddress common.Address, keyStart hexutil.Bytes, maxResult int) (StorageRangeResult, error) {
+func (api *DebugAPI) StorageRangeAt(ctx context.Context, blockHash common.Hash, txIndex int, contractAddress common.Address, keyStart hexutil.Bytes, maxResult int) (StorageRangeResult, error) {
 	// Retrieve the block
 	block := api.eth.blockchain.GetBlockByHash(blockHash)
 	if block == nil {
 		return StorageRangeResult{}, fmt.Errorf("block %#x not found", blockHash)
 	}
-	_, _, statedb, err := api.eth.stateAtTransaction(block, txIndex, 0)
+	_, _, statedb, release, err := api.eth.stateAtTransaction(ctx, block, txIndex, 0)
 	if err != nil {
 		return StorageRangeResult{}, err
 	}
-	st := statedb.StorageTrie(contractAddress)
+	defer release()
+
+	st, err := statedb.StorageTrie(contractAddress)
+	if err != nil {
+		return StorageRangeResult{}, err
+	}
 	if st == nil {
 		return StorageRangeResult{}, fmt.Errorf("account %x doesn't exist", contractAddress)
 	}
@@ -419,11 +402,11 @@ func (api *DebugAPI) getModifiedAccounts(startBlock, endBlock *types.Block) ([]c
 	}
 	triedb := api.eth.BlockChain().StateCache().TrieDB()
 
-	oldTrie, err := trie.NewSecure(common.Hash{}, startBlock.Root(), triedb)
+	oldTrie, err := trie.NewStateTrie(trie.StateTrieID(startBlock.Root()), triedb)
 	if err != nil {
 		return nil, err
 	}
-	newTrie, err := trie.NewSecure(common.Hash{}, endBlock.Root(), triedb)
+	newTrie, err := trie.NewStateTrie(trie.StateTrieID(endBlock.Root()), triedb)
 	if err != nil {
 		return nil, err
 	}
@@ -452,9 +435,9 @@ func (api *DebugAPI) GetAccessibleState(from, to rpc.BlockNumber) (uint64, error
 		if num.Int64() < 0 {
 			block := api.eth.blockchain.CurrentBlock()
 			if block == nil {
-				return 0, fmt.Errorf("current block missing")
+				return 0, errors.New("current block missing")
 			}
-			return block.NumberU64(), nil
+			return block.Number.Uint64(), nil
 		}
 		return uint64(num.Int64()), nil
 	}
@@ -472,7 +455,7 @@ func (api *DebugAPI) GetAccessibleState(from, to rpc.BlockNumber) (uint64, error
 		return 0, err
 	}
 	if start == end {
-		return 0, fmt.Errorf("from and to needs to be different")
+		return 0, errors.New("from and to needs to be different")
 	}
 	if start > end {
 		delta = -1

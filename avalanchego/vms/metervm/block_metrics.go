@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package metervm
@@ -23,12 +23,19 @@ type blockMetrics struct {
 	verifyErr,
 	accept,
 	reject,
-	// Batched metrics
-	getAncestors,
-	batchedParseBlock,
 	// Height metrics
 	verifyHeightIndex,
 	getBlockIDAtHeight,
+	// Block verification with context metrics
+	shouldVerifyWithContext,
+	verifyWithContext,
+	verifyWithContextErr,
+	// Block building with context metrics
+	buildBlockWithContext,
+	buildBlockWithContextErr,
+	// Batched metrics
+	getAncestors,
+	batchedParseBlock,
 	// State sync metrics
 	stateSyncEnabled,
 	getOngoingSyncStateSummary,
@@ -40,8 +47,8 @@ type blockMetrics struct {
 }
 
 func (m *blockMetrics) Initialize(
+	supportsBlockBuildingWithContext bool,
 	supportsBatchedFetching bool,
-	supportsHeightIndexing bool,
 	supportsStateSync bool,
 	namespace string,
 	reg prometheus.Registerer,
@@ -59,14 +66,19 @@ func (m *blockMetrics) Initialize(
 	m.verifyErr = newAverager(namespace, "verify_err", reg, &errs)
 	m.accept = newAverager(namespace, "accept", reg, &errs)
 	m.reject = newAverager(namespace, "reject", reg, &errs)
+	m.shouldVerifyWithContext = newAverager(namespace, "should_verify_with_context", reg, &errs)
+	m.verifyWithContext = newAverager(namespace, "verify_with_context", reg, &errs)
+	m.verifyWithContextErr = newAverager(namespace, "verify_with_context_err", reg, &errs)
+	m.verifyHeightIndex = newAverager(namespace, "verify_height_index", reg, &errs)
+	m.getBlockIDAtHeight = newAverager(namespace, "get_block_id_at_height", reg, &errs)
 
+	if supportsBlockBuildingWithContext {
+		m.buildBlockWithContext = newAverager(namespace, "build_block_with_context", reg, &errs)
+		m.buildBlockWithContextErr = newAverager(namespace, "build_block_with_context_err", reg, &errs)
+	}
 	if supportsBatchedFetching {
 		m.getAncestors = newAverager(namespace, "get_ancestors", reg, &errs)
 		m.batchedParseBlock = newAverager(namespace, "batched_parse_block", reg, &errs)
-	}
-	if supportsHeightIndexing {
-		m.verifyHeightIndex = newAverager(namespace, "verify_height_index", reg, &errs)
-		m.getBlockIDAtHeight = newAverager(namespace, "get_block_id_at_height", reg, &errs)
 	}
 	if supportsStateSync {
 		m.stateSyncEnabled = newAverager(namespace, "state_sync_enabled", reg, &errs)

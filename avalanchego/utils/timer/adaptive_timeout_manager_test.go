@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package timer
@@ -13,17 +13,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/ids"
-	"github.com/ava-labs/avalanchego/message"
 )
 
 // Test that Initialize works
 func TestAdaptiveTimeoutManagerInit(t *testing.T) {
 	type test struct {
-		config        AdaptiveTimeoutConfig
-		shouldErrWith string
+		config      AdaptiveTimeoutConfig
+		expectedErr error
 	}
 
-	tests := []test{
+	tests := []*test{
 		{
 			config: AdaptiveTimeoutConfig{
 				InitialTimeout:     time.Second,
@@ -32,7 +31,7 @@ func TestAdaptiveTimeoutManagerInit(t *testing.T) {
 				TimeoutCoefficient: 2,
 				TimeoutHalflife:    5 * time.Minute,
 			},
-			shouldErrWith: "initial timeout < minimum timeout",
+			expectedErr: errInitialTimeoutBelowMinimum,
 		},
 		{
 			config: AdaptiveTimeoutConfig{
@@ -42,7 +41,7 @@ func TestAdaptiveTimeoutManagerInit(t *testing.T) {
 				TimeoutCoefficient: 2,
 				TimeoutHalflife:    5 * time.Minute,
 			},
-			shouldErrWith: "initial timeout > maximum timeout",
+			expectedErr: errInitialTimeoutAboveMaximum,
 		},
 		{
 			config: AdaptiveTimeoutConfig{
@@ -52,7 +51,7 @@ func TestAdaptiveTimeoutManagerInit(t *testing.T) {
 				TimeoutCoefficient: 0.9,
 				TimeoutHalflife:    5 * time.Minute,
 			},
-			shouldErrWith: "timeout coefficient < 1",
+			expectedErr: errTooSmallTimeoutCoefficient,
 		},
 		{
 			config: AdaptiveTimeoutConfig{
@@ -61,7 +60,7 @@ func TestAdaptiveTimeoutManagerInit(t *testing.T) {
 				MaximumTimeout:     3 * time.Second,
 				TimeoutCoefficient: 1,
 			},
-			shouldErrWith: "timeout halflife is 0",
+			expectedErr: errNonPositiveHalflife,
 		},
 		{
 			config: AdaptiveTimeoutConfig{
@@ -71,7 +70,7 @@ func TestAdaptiveTimeoutManagerInit(t *testing.T) {
 				TimeoutCoefficient: 1,
 				TimeoutHalflife:    -1 * time.Second,
 			},
-			shouldErrWith: "timeout halflife is negative",
+			expectedErr: errNonPositiveHalflife,
 		},
 		{
 			config: AdaptiveTimeoutConfig{
@@ -86,11 +85,7 @@ func TestAdaptiveTimeoutManagerInit(t *testing.T) {
 
 	for _, test := range tests {
 		_, err := NewAdaptiveTimeoutManager(&test.config, "", prometheus.NewRegistry())
-		if err != nil && test.shouldErrWith == "" {
-			require.FailNow(t, "error from valid config", err)
-		} else if err == nil && test.shouldErrWith != "" {
-			require.FailNowf(t, "should have errored", test.shouldErrWith)
-		}
+		require.ErrorIs(t, err, test.expectedErr)
 	}
 }
 
@@ -106,9 +101,7 @@ func TestAdaptiveTimeoutManager(t *testing.T) {
 		"",
 		prometheus.NewRegistry(),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	go tm.Dispatch()
 
 	var lock sync.Mutex
@@ -125,14 +118,14 @@ func TestAdaptiveTimeoutManager(t *testing.T) {
 
 		numSuccessful--
 		if numSuccessful > 0 {
-			tm.Put(ids.ID{byte(numSuccessful)}, message.PullQuery, *callback)
+			tm.Put(ids.RequestID{Op: byte(numSuccessful)}, true, *callback)
 		}
 		if numSuccessful >= 0 {
 			wg.Done()
 		}
 		if numSuccessful%2 == 0 {
-			tm.Remove(ids.ID{byte(numSuccessful)})
-			tm.Put(ids.ID{byte(numSuccessful)}, message.PullQuery, *callback)
+			tm.Remove(ids.RequestID{Op: byte(numSuccessful)})
+			tm.Put(ids.RequestID{Op: byte(numSuccessful)}, true, *callback)
 		}
 	}
 	(*callback)()

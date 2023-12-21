@@ -1,10 +1,12 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/constants"
@@ -20,20 +22,16 @@ var addrStrArray = []string{
 	"Jz9ayEDt7dx9hDx45aXALujWmL9ZUuqe7",
 }
 
-var testHRP = constants.NetworkIDToHRP[networkID]
-
 func TestBuildGenesis(t *testing.T) {
+	require := require.New(t)
+
 	ss := CreateStaticService()
 	addrMap := map[string]string{}
 	for _, addrStr := range addrStrArray {
 		addr, err := ids.ShortFromString(addrStr)
-		if err != nil {
-			t.Fatal(err)
-		}
-		addrMap[addrStr], err = address.FormatBech32(testHRP, addr[:])
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(err)
+		addrMap[addrStr], err = address.FormatBech32(constants.UnitTestHRP, addr[:])
+		require.NoError(err)
 	}
 	args := BuildGenesisArgs{
 		Encoding: formatting.Hex,
@@ -101,8 +99,5 @@ func TestBuildGenesis(t *testing.T) {
 		},
 	}
 	reply := BuildGenesisReply{}
-	err := ss.BuildGenesis(nil, &args, &reply)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(ss.BuildGenesis(nil, &args, &reply))
 }

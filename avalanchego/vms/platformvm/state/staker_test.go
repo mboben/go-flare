@@ -1,18 +1,23 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package state
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/ava-labs/avalanchego/ids"
-	"github.com/ava-labs/avalanchego/utils/constants"
-	"github.com/ava-labs/avalanchego/vms/platformvm/validator"
+	"github.com/ava-labs/avalanchego/utils/crypto/bls"
+	"github.com/ava-labs/avalanchego/vms/platformvm/txs"
 )
+
+var errCustom = errors.New("custom")
 
 func TestStakerLess(t *testing.T) {
 	tests := []struct {
@@ -26,12 +31,12 @@ func TestStakerLess(t *testing.T) {
 			left: &Staker{
 				TxID:     ids.ID([32]byte{}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkValidatorCurrentPriority,
+				Priority: txs.PrimaryNetworkValidatorCurrentPriority,
 			},
 			right: &Staker{
 				TxID:     ids.ID([32]byte{}),
 				NextTime: time.Unix(1, 0),
-				Priority: PrimaryNetworkValidatorCurrentPriority,
+				Priority: txs.PrimaryNetworkValidatorCurrentPriority,
 			},
 			less: true,
 		},
@@ -40,12 +45,12 @@ func TestStakerLess(t *testing.T) {
 			left: &Staker{
 				TxID:     ids.ID([32]byte{}),
 				NextTime: time.Unix(1, 0),
-				Priority: PrimaryNetworkValidatorCurrentPriority,
+				Priority: txs.PrimaryNetworkValidatorCurrentPriority,
 			},
 			right: &Staker{
 				TxID:     ids.ID([32]byte{}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkValidatorCurrentPriority,
+				Priority: txs.PrimaryNetworkValidatorCurrentPriority,
 			},
 			less: false,
 		},
@@ -54,12 +59,12 @@ func TestStakerLess(t *testing.T) {
 			left: &Staker{
 				TxID:     ids.ID([32]byte{}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkDelegatorPendingPriority,
+				Priority: txs.PrimaryNetworkDelegatorApricotPendingPriority,
 			},
 			right: &Staker{
 				TxID:     ids.ID([32]byte{}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkValidatorPendingPriority,
+				Priority: txs.PrimaryNetworkValidatorPendingPriority,
 			},
 			less: true,
 		},
@@ -68,12 +73,12 @@ func TestStakerLess(t *testing.T) {
 			left: &Staker{
 				TxID:     ids.ID([32]byte{}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkValidatorPendingPriority,
+				Priority: txs.PrimaryNetworkValidatorPendingPriority,
 			},
 			right: &Staker{
 				TxID:     ids.ID([32]byte{}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkDelegatorPendingPriority,
+				Priority: txs.PrimaryNetworkDelegatorApricotPendingPriority,
 			},
 			less: false,
 		},
@@ -82,12 +87,12 @@ func TestStakerLess(t *testing.T) {
 			left: &Staker{
 				TxID:     ids.ID([32]byte{0}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkValidatorPendingPriority,
+				Priority: txs.PrimaryNetworkValidatorPendingPriority,
 			},
 			right: &Staker{
 				TxID:     ids.ID([32]byte{1}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkValidatorPendingPriority,
+				Priority: txs.PrimaryNetworkValidatorPendingPriority,
 			},
 			less: true,
 		},
@@ -96,12 +101,12 @@ func TestStakerLess(t *testing.T) {
 			left: &Staker{
 				TxID:     ids.ID([32]byte{1}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkValidatorPendingPriority,
+				Priority: txs.PrimaryNetworkValidatorPendingPriority,
 			},
 			right: &Staker{
 				TxID:     ids.ID([32]byte{0}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkValidatorPendingPriority,
+				Priority: txs.PrimaryNetworkValidatorPendingPriority,
 			},
 			less: false,
 		},
@@ -110,12 +115,12 @@ func TestStakerLess(t *testing.T) {
 			left: &Staker{
 				TxID:     ids.ID([32]byte{}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkValidatorCurrentPriority,
+				Priority: txs.PrimaryNetworkValidatorCurrentPriority,
 			},
 			right: &Staker{
 				TxID:     ids.ID([32]byte{}),
 				NextTime: time.Unix(0, 0),
-				Priority: PrimaryNetworkValidatorCurrentPriority,
+				Priority: txs.PrimaryNetworkValidatorCurrentPriority,
 			},
 			less: false,
 		},
@@ -127,51 +132,91 @@ func TestStakerLess(t *testing.T) {
 	}
 }
 
-func TestNewPrimaryNetworkStaker(t *testing.T) {
+func TestNewCurrentStaker(t *testing.T) {
 	require := require.New(t)
-	txID := ids.GenerateTestID()
-	vdr := &validator.Validator{
-		NodeID: ids.GenerateTestNodeID(),
-		Start:  0,
-		End:    1,
-		Wght:   2,
-	}
+	ctrl := gomock.NewController(t)
 
-	staker := NewPrimaryNetworkStaker(txID, vdr)
+	txID := ids.GenerateTestID()
+	nodeID := ids.GenerateTestNodeID()
+	sk, err := bls.NewSecretKey()
+	require.NoError(err)
+	publicKey := bls.PublicFromSecretKey(sk)
+	subnetID := ids.GenerateTestID()
+	weight := uint64(12345)
+	startTime := time.Now()
+	endTime := time.Now()
+	potentialReward := uint64(54321)
+	currentPriority := txs.SubnetPermissionedValidatorCurrentPriority
+
+	stakerTx := txs.NewMockStaker(ctrl)
+	stakerTx.EXPECT().NodeID().Return(nodeID)
+	stakerTx.EXPECT().PublicKey().Return(publicKey, true, nil)
+	stakerTx.EXPECT().SubnetID().Return(subnetID)
+	stakerTx.EXPECT().Weight().Return(weight)
+	stakerTx.EXPECT().StartTime().Return(startTime)
+	stakerTx.EXPECT().EndTime().Return(endTime)
+	stakerTx.EXPECT().CurrentPriority().Return(currentPriority)
+
+	staker, err := NewCurrentStaker(txID, stakerTx, potentialReward)
 	require.NotNil(staker)
+	require.NoError(err)
 	require.Equal(txID, staker.TxID)
-	require.Equal(vdr.NodeID, staker.NodeID)
-	require.Equal(constants.PrimaryNetworkID, staker.SubnetID)
-	require.Equal(vdr.Wght, staker.Weight)
-	require.Equal(vdr.StartTime(), staker.StartTime)
-	require.Equal(vdr.EndTime(), staker.EndTime)
-	require.Zero(staker.PotentialReward)
-	require.Zero(staker.NextTime)
-	require.Zero(staker.Priority)
+	require.Equal(nodeID, staker.NodeID)
+	require.Equal(publicKey, staker.PublicKey)
+	require.Equal(subnetID, staker.SubnetID)
+	require.Equal(weight, staker.Weight)
+	require.Equal(startTime, staker.StartTime)
+	require.Equal(endTime, staker.EndTime)
+	require.Equal(potentialReward, staker.PotentialReward)
+	require.Equal(endTime, staker.NextTime)
+	require.Equal(currentPriority, staker.Priority)
+
+	stakerTx.EXPECT().PublicKey().Return(nil, false, errCustom)
+
+	_, err = NewCurrentStaker(txID, stakerTx, potentialReward)
+	require.ErrorIs(err, errCustom)
 }
 
-func TestNewSubnetStaker(t *testing.T) {
+func TestNewPendingStaker(t *testing.T) {
 	require := require.New(t)
-	txID := ids.GenerateTestID()
-	vdr := &validator.SubnetValidator{
-		Validator: validator.Validator{
-			NodeID: ids.GenerateTestNodeID(),
-			Start:  0,
-			End:    1,
-			Wght:   2,
-		},
-		Subnet: ids.GenerateTestID(),
-	}
+	ctrl := gomock.NewController(t)
 
-	staker := NewSubnetStaker(txID, vdr)
+	txID := ids.GenerateTestID()
+	nodeID := ids.GenerateTestNodeID()
+	sk, err := bls.NewSecretKey()
+	require.NoError(err)
+	publicKey := bls.PublicFromSecretKey(sk)
+	subnetID := ids.GenerateTestID()
+	weight := uint64(12345)
+	startTime := time.Now()
+	endTime := time.Now()
+	pendingPriority := txs.SubnetPermissionedValidatorPendingPriority
+
+	stakerTx := txs.NewMockStaker(ctrl)
+	stakerTx.EXPECT().NodeID().Return(nodeID)
+	stakerTx.EXPECT().PublicKey().Return(publicKey, true, nil)
+	stakerTx.EXPECT().SubnetID().Return(subnetID)
+	stakerTx.EXPECT().Weight().Return(weight)
+	stakerTx.EXPECT().StartTime().Return(startTime)
+	stakerTx.EXPECT().EndTime().Return(endTime)
+	stakerTx.EXPECT().PendingPriority().Return(pendingPriority)
+
+	staker, err := NewPendingStaker(txID, stakerTx)
 	require.NotNil(staker)
+	require.NoError(err)
 	require.Equal(txID, staker.TxID)
-	require.Equal(vdr.NodeID, staker.NodeID)
-	require.Equal(vdr.Subnet, staker.SubnetID)
-	require.Equal(vdr.Wght, staker.Weight)
-	require.Equal(vdr.StartTime(), staker.StartTime)
-	require.Equal(vdr.EndTime(), staker.EndTime)
+	require.Equal(nodeID, staker.NodeID)
+	require.Equal(publicKey, staker.PublicKey)
+	require.Equal(subnetID, staker.SubnetID)
+	require.Equal(weight, staker.Weight)
+	require.Equal(startTime, staker.StartTime)
+	require.Equal(endTime, staker.EndTime)
 	require.Zero(staker.PotentialReward)
-	require.Zero(staker.NextTime)
-	require.Zero(staker.Priority)
+	require.Equal(startTime, staker.NextTime)
+	require.Equal(pendingPriority, staker.Priority)
+
+	stakerTx.EXPECT().PublicKey().Return(nil, false, errCustom)
+
+	_, err = NewPendingStaker(txID, stakerTx)
+	require.ErrorIs(err, errCustom)
 }

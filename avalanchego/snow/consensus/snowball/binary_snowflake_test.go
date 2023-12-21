@@ -1,56 +1,51 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package snowball
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestBinarySnowflake(t *testing.T) {
-	Blue := 0
-	Red := 1
+	require := require.New(t)
+
+	blue := 0
+	red := 1
 
 	beta := 2
 
-	sf := binarySnowflake{}
-	sf.Initialize(beta, Red)
+	sf := newBinarySnowflake(beta, red)
 
-	if pref := sf.Preference(); pref != Red {
-		t.Fatalf("Wrong preference. Expected %d got %d", Red, pref)
-	} else if sf.Finalized() {
-		t.Fatalf("Finalized too early")
-	}
+	require.Equal(red, sf.Preference())
+	require.False(sf.Finalized())
 
-	sf.RecordSuccessfulPoll(Blue)
+	sf.RecordSuccessfulPoll(blue)
 
-	if pref := sf.Preference(); pref != Blue {
-		t.Fatalf("Wrong preference. Expected %d got %d", Blue, pref)
-	} else if sf.Finalized() {
-		t.Fatalf("Finalized too early")
-	}
+	require.Equal(blue, sf.Preference())
+	require.False(sf.Finalized())
 
-	sf.RecordSuccessfulPoll(Red)
+	sf.RecordSuccessfulPoll(red)
 
-	if pref := sf.Preference(); pref != Red {
-		t.Fatalf("Wrong preference. Expected %d got %d", Red, pref)
-	} else if sf.Finalized() {
-		t.Fatalf("Finalized too early")
-	}
+	require.Equal(red, sf.Preference())
+	require.False(sf.Finalized())
 
-	sf.RecordSuccessfulPoll(Blue)
+	sf.RecordSuccessfulPoll(blue)
 
-	if pref := sf.Preference(); pref != Blue {
-		t.Fatalf("Wrong preference. Expected %d got %d", Blue, pref)
-	} else if sf.Finalized() {
-		t.Fatalf("Finalized too early")
-	}
+	require.Equal(blue, sf.Preference())
+	require.False(sf.Finalized())
 
-	sf.RecordSuccessfulPoll(Blue)
+	sf.RecordPollPreference(red)
+	require.Equal(red, sf.Preference())
+	require.False(sf.Finalized())
 
-	if pref := sf.Preference(); pref != Blue {
-		t.Fatalf("Wrong preference. Expected %d got %d", Blue, pref)
-	} else if !sf.Finalized() {
-		t.Fatalf("Didn't finalized correctly")
-	}
+	sf.RecordSuccessfulPoll(blue)
+	require.Equal(blue, sf.Preference())
+	require.False(sf.Finalized())
+
+	sf.RecordSuccessfulPoll(blue)
+	require.Equal(blue, sf.Preference())
+	require.True(sf.Finalized())
 }

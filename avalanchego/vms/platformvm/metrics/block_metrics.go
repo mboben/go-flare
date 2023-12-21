@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package metrics
@@ -9,10 +9,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ava-labs/avalanchego/utils/wrappers"
-	"github.com/ava-labs/avalanchego/vms/platformvm/blocks"
+	"github.com/ava-labs/avalanchego/vms/platformvm/block"
 )
 
-var _ blocks.Visitor = &blockMetrics{}
+var _ block.Visitor = (*blockMetrics)(nil)
 
 type blockMetrics struct {
 	txMetrics *txMetrics
@@ -56,17 +56,27 @@ func newBlockMetric(
 	return blockMetric
 }
 
-func (m *blockMetrics) ProposalBlock(b *blocks.ProposalBlock) error {
+func (m *blockMetrics) BanffAbortBlock(*block.BanffAbortBlock) error {
+	m.numAbortBlocks.Inc()
+	return nil
+}
+
+func (m *blockMetrics) BanffCommitBlock(*block.BanffCommitBlock) error {
+	m.numCommitBlocks.Inc()
+	return nil
+}
+
+func (m *blockMetrics) BanffProposalBlock(b *block.BanffProposalBlock) error {
 	m.numProposalBlocks.Inc()
+	for _, tx := range b.Transactions {
+		if err := tx.Unsigned.Visit(m.txMetrics); err != nil {
+			return err
+		}
+	}
 	return b.Tx.Unsigned.Visit(m.txMetrics)
 }
 
-func (m *blockMetrics) AtomicBlock(b *blocks.AtomicBlock) error {
-	m.numAtomicBlocks.Inc()
-	return b.Tx.Unsigned.Visit(m.txMetrics)
-}
-
-func (m *blockMetrics) StandardBlock(b *blocks.StandardBlock) error {
+func (m *blockMetrics) BanffStandardBlock(b *block.BanffStandardBlock) error {
 	m.numStandardBlocks.Inc()
 	for _, tx := range b.Transactions {
 		if err := tx.Unsigned.Visit(m.txMetrics); err != nil {
@@ -76,12 +86,32 @@ func (m *blockMetrics) StandardBlock(b *blocks.StandardBlock) error {
 	return nil
 }
 
-func (m *blockMetrics) CommitBlock(*blocks.CommitBlock) error {
+func (m *blockMetrics) ApricotAbortBlock(*block.ApricotAbortBlock) error {
+	m.numAbortBlocks.Inc()
+	return nil
+}
+
+func (m *blockMetrics) ApricotCommitBlock(*block.ApricotCommitBlock) error {
 	m.numCommitBlocks.Inc()
 	return nil
 }
 
-func (m *blockMetrics) AbortBlock(*blocks.AbortBlock) error {
-	m.numAbortBlocks.Inc()
+func (m *blockMetrics) ApricotProposalBlock(b *block.ApricotProposalBlock) error {
+	m.numProposalBlocks.Inc()
+	return b.Tx.Unsigned.Visit(m.txMetrics)
+}
+
+func (m *blockMetrics) ApricotStandardBlock(b *block.ApricotStandardBlock) error {
+	m.numStandardBlocks.Inc()
+	for _, tx := range b.Transactions {
+		if err := tx.Unsigned.Visit(m.txMetrics); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (m *blockMetrics) ApricotAtomicBlock(b *block.ApricotAtomicBlock) error {
+	m.numAtomicBlocks.Inc()
+	return b.Tx.Unsigned.Visit(m.txMetrics)
 }

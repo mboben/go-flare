@@ -284,7 +284,7 @@ func (st *StateTransition) SetGovernanceAddress(chainID *big.Int, timestamp *big
 			st.evm.Context.Coinbase = originalCoinbase
 		}()
 		st.evm.Context.Coinbase = coinbaseSignal
-		_, _, _, err := st.evm.DaemonCall(vm.AccountRef(coinbaseSignal), st.to(), st.data, st.evm.Context.GasLimit)
+		_, _, _, err := st.evm.DaemonCall(vm.AccountRef(coinbaseSignal), st.to(), st.msg.Data, st.evm.Context.GasLimit)
 		if err != nil {
 			return err
 		}
@@ -300,7 +300,7 @@ func (st *StateTransition) SetTimelock(chainID *big.Int, timestamp *big.Int, new
 			st.evm.Context.Coinbase = originalCoinbase
 		}()
 		st.evm.Context.Coinbase = coinbaseSignal
-		_, _, _, err := st.evm.DaemonCall(vm.AccountRef(coinbaseSignal), st.to(), st.data, st.evm.Context.GasLimit)
+		_, _, _, err := st.evm.DaemonCall(vm.AccountRef(coinbaseSignal), st.to(), st.msg.Data, st.evm.Context.GasLimit)
 		if err != nil {
 			return err
 		}
@@ -315,7 +315,7 @@ func (st *StateTransition) UpdateInitialAirdropAddress(chainID *big.Int, timesta
 		st.evm.Context.Coinbase = originalCoinbase
 	}()
 	st.evm.Context.Coinbase = coinbaseSignal
-	_, _, _, err := st.evm.DaemonCall(vm.AccountRef(coinbaseSignal), st.to(), st.data, st.evm.Context.GasLimit)
+	_, _, _, err := st.evm.DaemonCall(vm.AccountRef(coinbaseSignal), st.to(), st.msg.Data, st.evm.Context.GasLimit)
 	if err != nil {
 		return err
 	}
@@ -334,7 +334,7 @@ func (st *StateTransition) UpdateDistributionAddress(chainID *big.Int, timestamp
 		st.evm.Context.Coinbase = originalCoinbase
 	}()
 	st.evm.Context.Coinbase = coinbaseSignal
-	_, _, _, err := st.evm.DaemonCall(vm.AccountRef(coinbaseSignal), st.to(), st.data, st.evm.Context.GasLimit)
+	_, _, _, err := st.evm.DaemonCall(vm.AccountRef(coinbaseSignal), st.to(), st.msg.Data, st.evm.Context.GasLimit)
 	if err != nil {
 		return err
 	}

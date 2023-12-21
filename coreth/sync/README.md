@@ -28,7 +28,7 @@ State sync code is structured as follows:
   - `CodeRequestHandler`: handles requests for contract code
   - `BlockRequestHandler`: handles requests for blocks
   - _Note: There are response size and time limits in place so peers joining the network do not overload peers providing data.  Additionally, the engine tracks the CPU usage of each peer for such messsages and throttles inbound requests accordingly._
-- `sync/client`: Validates reponses from peers and provides support for syncing tries.
+- `sync/client`: Validates responses from peers and provides support for syncing tries.
 - `sync/statesync`: Uses `sync/client` to sync EVM related state: Accounts, storage tries, and contract code.
 - `plugin/evm/atomicSyncer`: Uses `sync/client` to sync the atomic trie.
 - `plugin/evm/`: The engine expects the VM to implement `StateSyncableVM` interface,
@@ -127,4 +127,4 @@ While state sync is faster than normal bootstrapping, the process may take sever
 | `state-sync-skip-resume` | `bool` | set to true to avoid resuming an ongoing sync | `false` |
 | `state-sync-min-blocks` | `uint64` | Minimum number of blocks the chain must be ahead of local state to prefer state sync over bootstrapping | `300,000` |
 | `state-sync-server-trie-cache` | `int` | Size of trie cache to serve state sync data in MB. Should be set to multiples of `64`. | `64` |
-| `state-sync-ids` | `string` | a comma seperated list of `NodeID-` prefixed node IDs to sync data from. If not provided, peers are randomly selected. | |
+| `state-sync-ids` | `string` | a comma separated list of `NodeID-` prefixed node IDs to sync data from. If not provided, peers are randomly selected. | |

@@ -1,15 +1,17 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package block
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/utils/units"
 )
 
 func equal(require *require.Assertions, chainID ids.ID, want, have SignedBlock) {
@@ -39,8 +41,21 @@ func TestVerifyNoCertWithSignature(t *testing.T) {
 	builtBlock.Signature = []byte{0}
 
 	err = builtBlock.Verify(false, ids.Empty)
-	require.Error(err)
+	require.ErrorIs(err, errUnexpectedProposer)
 
 	err = builtBlock.Verify(true, ids.Empty)
-	require.Error(err)
+	require.ErrorIs(err, errMissingProposer)
+}
+
+func TestBlockSizeLimit(t *testing.T) {
+	require := require.New(t)
+
+	parentID := ids.ID{1}
+	timestamp := time.Unix(123, 0)
+	pChainHeight := uint64(2)
+	innerBlockBytes := bytes.Repeat([]byte{0}, 270*units.KiB)
+
+	// with the large limit, it should be able to build large blocks
+	_, err := BuildUnsigned(parentID, timestamp, pChainHeight, innerBlockBytes)
+	require.NoError(err)
 }

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package reward
@@ -6,9 +6,11 @@ package reward
 import (
 	"math/big"
 	"time"
+
+	"github.com/ava-labs/avalanchego/utils/math"
 )
 
-var _ Calculator = &calculator{}
+var _ Calculator = (*calculator)(nil)
 
 type Calculator interface {
 	Calculate(stakedDuration time.Duration, stakedAmount, currentSupply uint64) uint64
@@ -31,6 +33,23 @@ func NewCalculator(c Config) Calculator {
 }
 
 // Reward returns the amount of tokens to reward the staker with.
+// For Flare P-chain rewards are 0.
 func (c *calculator) Calculate(stakedDuration time.Duration, stakedAmount, currentSupply uint64) uint64 {
 	return uint64(0)
+}
+
+// Split [totalAmount] into [totalAmount * shares percentage] and the remainder.
+//
+// Invariant: [shares] <= [PercentDenominator]
+func Split(totalAmount uint64, shares uint32) (uint64, uint64) {
+	remainderShares := PercentDenominator - uint64(shares)
+	remainderAmount := remainderShares * (totalAmount / PercentDenominator)
+
+	// Delay rounding as long as possible for small numbers
+	if optimisticReward, err := math.Mul64(remainderShares, totalAmount); err == nil {
+		remainderAmount = optimisticReward / PercentDenominator
+	}
+
+	amountFromShares := totalAmount - remainderAmount
+	return amountFromShares, remainderAmount
 }

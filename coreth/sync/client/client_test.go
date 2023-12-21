@@ -24,6 +24,7 @@ import (
 	clientstats "github.com/ava-labs/coreth/sync/client/stats"
 	"github.com/ava-labs/coreth/sync/handlers"
 	handlerstats "github.com/ava-labs/coreth/sync/handlers/stats"
+	"github.com/ava-labs/coreth/sync/syncutils"
 	"github.com/ava-labs/coreth/trie"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -410,8 +411,8 @@ func TestGetLeafs(t *testing.T) {
 	const leafsLimit = 1024
 
 	trieDB := trie.NewDatabase(memorydb.New())
-	largeTrieRoot, largeTrieKeys, _ := trie.GenerateTrie(t, trieDB, 100_000, common.HashLength)
-	smallTrieRoot, _, _ := trie.GenerateTrie(t, trieDB, leafsLimit, common.HashLength)
+	largeTrieRoot, largeTrieKeys, _ := syncutils.GenerateTrie(t, trieDB, 100_000, common.HashLength)
+	smallTrieRoot, _, _ := syncutils.GenerateTrie(t, trieDB, leafsLimit, common.HashLength)
 
 	handler := handlers.NewLeafsRequestHandler(trieDB, nil, message.Codec, handlerstats.NewNoopHandlerStats())
 	client := NewClient(&ClientConfig{
@@ -793,7 +794,7 @@ func TestGetLeafsRetries(t *testing.T) {
 	rand.Seed(1)
 
 	trieDB := trie.NewDatabase(memorydb.New())
-	root, _, _ := trie.GenerateTrie(t, trieDB, 100_000, common.HashLength)
+	root, _, _ := syncutils.GenerateTrie(t, trieDB, 100_000, common.HashLength)
 
 	handler := handlers.NewLeafsRequestHandler(trieDB, nil, message.Codec, handlerstats.NewNoopHandlerStats())
 	mockNetClient := &mockNetwork{}
@@ -811,7 +812,7 @@ func TestGetLeafsRetries(t *testing.T) {
 		Root:     root,
 		Start:    bytes.Repeat([]byte{0x00}, common.HashLength),
 		End:      bytes.Repeat([]byte{0xff}, common.HashLength),
-		Limit:    defaultLeafRequestLimit,
+		Limit:    1024,
 		NodeType: message.StateTrieNode,
 	}
 

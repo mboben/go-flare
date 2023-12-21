@@ -4,15 +4,18 @@
 package evm
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"encoding/json"
 	"math/big"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/utils/set"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -24,6 +27,7 @@ import (
 	"github.com/ava-labs/coreth/core/types"
 	"github.com/ava-labs/coreth/params"
 	"github.com/ava-labs/coreth/plugin/evm/message"
+	"github.com/ava-labs/coreth/utils"
 )
 
 func fundAddressByGenesis(addrs []common.Address) (string, error) {
@@ -42,10 +46,10 @@ func fundAddressByGenesis(addrs []common.Address) (string, error) {
 
 	genesis.Config = &params.ChainConfig{
 		ChainID:                     params.AvalancheLocalChainID,
-		ApricotPhase1BlockTimestamp: big.NewInt(0),
-		ApricotPhase2BlockTimestamp: big.NewInt(0),
-		ApricotPhase3BlockTimestamp: big.NewInt(0),
-		ApricotPhase4BlockTimestamp: big.NewInt(0),
+		ApricotPhase1BlockTimestamp: utils.NewUint64(0),
+		ApricotPhase2BlockTimestamp: utils.NewUint64(0),
+		ApricotPhase3BlockTimestamp: utils.NewUint64(0),
+		ApricotPhase4BlockTimestamp: utils.NewUint64(0),
 	}
 
 	bytes, err := json.Marshal(genesis)
@@ -80,7 +84,9 @@ func getValidEthTxs(key *ecdsa.PrivateKey, count int, gasPrice *big.Int) []*type
 // to ease up UT, which target only VM behaviors in response to coreth mempool
 // signals
 func TestMempoolEthTxsAddedTxsGossipedAfterActivation(t *testing.T) {
-	t.Skip("FLAKY")
+	if os.Getenv("RUN_FLAKY_TESTS") != "true" {
+		t.Skip("FLAKY")
+	}
 	assert := assert.New(t)
 
 	key, err := crypto.GenerateKey()
@@ -93,7 +99,7 @@ func TestMempoolEthTxsAddedTxsGossipedAfterActivation(t *testing.T) {
 
 	_, vm, _, _, sender := GenesisVM(t, true, genesisJSON, "", "")
 	defer func() {
-		err := vm.Shutdown()
+		err := vm.Shutdown(context.Background())
 		assert.NoError(err)
 	}()
 	vm.txPool.SetGasPrice(common.Big1)
@@ -107,7 +113,7 @@ func TestMempoolEthTxsAddedTxsGossipedAfterActivation(t *testing.T) {
 	sender.CantSendAppGossip = false
 	signal1 := make(chan struct{})
 	seen := 0
-	sender.SendAppGossipF = func(gossipedBytes []byte) error {
+	sender.SendAppGossipF = func(_ context.Context, gossipedBytes []byte) error {
 		if seen == 0 {
 			notifyMsgIntf, err := message.ParseGossipMessage(vm.networkCodec, gossipedBytes)
 			assert.NoError(err)
@@ -166,7 +172,9 @@ func TestMempoolEthTxsAddedTxsGossipedAfterActivation(t *testing.T) {
 
 // show that locally issued eth txs are chunked correctly
 func TestMempoolEthTxsAddedTxsGossipedAfterActivationChunking(t *testing.T) {
-	t.Skip("FLAKY")
+	if os.Getenv("RUN_FLAKY_TESTS") != "true" {
+		t.Skip("FLAKY")
+	}
 	assert := assert.New(t)
 
 	key, err := crypto.GenerateKey()
@@ -179,7 +187,7 @@ func TestMempoolEthTxsAddedTxsGossipedAfterActivationChunking(t *testing.T) {
 
 	_, vm, _, _, sender := GenesisVM(t, true, genesisJSON, "", "")
 	defer func() {
-		err := vm.Shutdown()
+		err := vm.Shutdown(context.Background())
 		assert.NoError(err)
 	}()
 	vm.txPool.SetGasPrice(common.Big1)
@@ -192,7 +200,7 @@ func TestMempoolEthTxsAddedTxsGossipedAfterActivationChunking(t *testing.T) {
 	wg.Add(2)
 	sender.CantSendAppGossip = false
 	seen := map[common.Hash]struct{}{}
-	sender.SendAppGossipF = func(gossipedBytes []byte) error {
+	sender.SendAppGossipF = func(_ context.Context, gossipedBytes []byte) error {
 		notifyMsgIntf, err := message.ParseGossipMessage(vm.networkCodec, gossipedBytes)
 		assert.NoError(err)
 
@@ -226,7 +234,9 @@ func TestMempoolEthTxsAddedTxsGossipedAfterActivationChunking(t *testing.T) {
 // show that a geth tx discovered from gossip is requested to the same node that
 // gossiped it
 func TestMempoolEthTxsAppGossipHandling(t *testing.T) {
-	t.Skip("FLAKY")
+	if os.Getenv("RUN_FLAKY_TESTS") != "true" {
+		t.Skip("FLAKY")
+	}
 	assert := assert.New(t)
 
 	key, err := crypto.GenerateKey()
@@ -239,7 +249,7 @@ func TestMempoolEthTxsAppGossipHandling(t *testing.T) {
 
 	_, vm, _, _, sender := GenesisVM(t, true, genesisJSON, "", "")
 	defer func() {
-		err := vm.Shutdown()
+		err := vm.Shutdown(context.Background())
 		assert.NoError(err)
 	}()
 	vm.txPool.SetGasPrice(common.Big1)
@@ -250,12 +260,12 @@ func TestMempoolEthTxsAppGossipHandling(t *testing.T) {
 		txRequested bool
 	)
 	sender.CantSendAppGossip = false
-	sender.SendAppRequestF = func(_ ids.NodeIDSet, _ uint32, _ []byte) error {
+	sender.SendAppRequestF = func(context.Context, set.Set[ids.NodeID], uint32, []byte) error {
 		txRequested = true
 		return nil
 	}
 	wg.Add(1)
-	sender.SendAppGossipF = func(_ []byte) error {
+	sender.SendAppGossipF = func(context.Context, []byte) error {
 		wg.Done()
 		return nil
 	}
@@ -273,7 +283,7 @@ func TestMempoolEthTxsAppGossipHandling(t *testing.T) {
 	assert.NoError(err)
 
 	nodeID := ids.GenerateTestNodeID()
-	err = vm.AppGossip(nodeID, msgBytes)
+	err = vm.AppGossip(context.Background(), nodeID, msgBytes)
 	assert.NoError(err)
 	assert.False(txRequested, "tx should not be requested")
 
@@ -294,7 +304,7 @@ func TestMempoolEthTxsRegossipSingleAccount(t *testing.T) {
 
 	_, vm, _, _, _ := GenesisVM(t, true, genesisJSON, `{"local-txs-enabled":true}`, "")
 	defer func() {
-		err := vm.Shutdown()
+		err := vm.Shutdown(context.Background())
 		assert.NoError(err)
 	}()
 	vm.txPool.SetGasPrice(common.Big1)
@@ -334,7 +344,7 @@ func TestMempoolEthTxsRegossip(t *testing.T) {
 
 	_, vm, _, _, _ := GenesisVM(t, true, genesisJSON, `{"local-txs-enabled":true}`, "")
 	defer func() {
-		err := vm.Shutdown()
+		err := vm.Shutdown(context.Background())
 		assert.NoError(err)
 	}()
 	vm.txPool.SetGasPrice(common.Big1)

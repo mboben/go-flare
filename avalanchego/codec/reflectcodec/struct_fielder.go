@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package reflectcodec
@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strconv"
 	"sync"
+
+	"github.com/ava-labs/avalanchego/codec"
 )
 
 const (
@@ -16,13 +18,18 @@ const (
 
 	// TagValue is the value the tag must have to be serialized.
 	TagValue = "true"
+
+	// TagValue is the value the tag must have to be serialized, this variant
+	// includes the nullable option
+	TagWithNullableValue = "true,nullable"
 )
 
-var _ StructFielder = &structFielder{}
+var _ StructFielder = (*structFielder)(nil)
 
 type FieldDesc struct {
 	Index       int
 	MaxSliceLen uint32
+	Nullable    bool
 }
 
 // StructFielder handles discovery of serializable fields in a struct.
@@ -80,10 +87,19 @@ func (s *structFielder) GetSerializedFields(t reflect.Type) ([]FieldDesc, error)
 		// Multiple tags per fields can be specified.
 		// Serialize/Deserialize field if it has
 		// any tag with the right value
-		captureField := false
+		var (
+			captureField bool
+			nullable     bool
+		)
 		for _, tag := range s.tags {
-			if field.Tag.Get(tag) == TagValue {
+			switch field.Tag.Get(tag) {
+			case TagValue:
 				captureField = true
+			case TagWithNullableValue:
+				captureField = true
+				nullable = true
+			}
+			if captureField {
 				break
 			}
 		}
@@ -91,7 +107,10 @@ func (s *structFielder) GetSerializedFields(t reflect.Type) ([]FieldDesc, error)
 			continue
 		}
 		if !field.IsExported() { // Can only marshal exported fields
-			return nil, fmt.Errorf("can't marshal un-exported field %s", field.Name)
+			return nil, fmt.Errorf("can not marshal %w: %s",
+				codec.ErrUnexportedField,
+				field.Name,
+			)
 		}
 		sliceLenField := field.Tag.Get(SliceLenTagName)
 		maxSliceLen := s.maxSliceLen
@@ -102,6 +121,7 @@ func (s *structFielder) GetSerializedFields(t reflect.Type) ([]FieldDesc, error)
 		serializedFields = append(serializedFields, FieldDesc{
 			Index:       i,
 			MaxSliceLen: maxSliceLen,
+			Nullable:    nullable,
 		})
 	}
 	s.serializedFieldIndices[t] = serializedFields // cache result

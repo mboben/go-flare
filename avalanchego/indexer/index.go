@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package indexer
@@ -17,17 +17,15 @@ import (
 	"github.com/ava-labs/avalanchego/database/versiondb"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
+	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/math"
 	"github.com/ava-labs/avalanchego/utils/timer/mockable"
-	"github.com/ava-labs/avalanchego/utils/wrappers"
 )
 
-const (
-	// Maximum number of containers IDs that can be fetched at a time
-	// in a call to GetContainerRange
-	MaxFetchedByRange = 1024
-)
+// Maximum number of containers IDs that can be fetched at a time in a call to
+// GetContainerRange
+const MaxFetchedByRange = 1024
 
 var (
 	// Maps to the byte representation of the next accepted index
@@ -35,9 +33,10 @@ var (
 	indexToContainerPrefix = []byte{0x01}
 	containerToIDPrefix    = []byte{0x02}
 	errNoneAccepted        = errors.New("no containers have been accepted")
-	errNumToFetchZero      = fmt.Errorf("numToFetch must be in [1,%d]", MaxFetchedByRange)
+	errNumToFetchInvalid   = fmt.Errorf("numToFetch must be in [1,%d]", MaxFetchedByRange)
+	errNoContainerAtIndex  = errors.New("no container at index")
 
-	_ Index = &index{}
+	_ Index = (*index)(nil)
 )
 
 // Index indexes containers in their order of acceptance
@@ -115,14 +114,12 @@ func newIndex(
 
 // Close this index
 func (i *index) Close() error {
-	errs := wrappers.Errs{}
-	errs.Add(
+	return utils.Err(
 		i.indexToContainer.Close(),
 		i.containerToIndex.Close(),
 		i.vDB.Close(),
 		i.baseDB.Close(),
 	)
-	return errs.Err
 }
 
 // Index that the given transaction is accepted
@@ -195,7 +192,7 @@ func (i *index) GetContainerByIndex(index uint64) (Container, error) {
 func (i *index) getContainerByIndex(index uint64) (Container, error) {
 	lastAcceptedIndex, ok := i.lastAcceptedIndex()
 	if !ok || index > lastAcceptedIndex {
-		return Container{}, fmt.Errorf("no container at index %d", index)
+		return Container{}, fmt.Errorf("%w %d", errNoContainerAtIndex, index)
 	}
 	indexBytes := database.PackUInt64(index)
 	return i.getContainerByIndexBytes(indexBytes)
@@ -212,7 +209,7 @@ func (i *index) getContainerByIndexBytes(indexBytes []byte) (Container, error) {
 		return Container{}, fmt.Errorf("couldn't read from database: %w", err)
 	}
 	var container Container
-	if _, err = i.codec.Unmarshal(containerBytes, &container); err != nil {
+	if _, err := i.codec.Unmarshal(containerBytes, &container); err != nil {
 		return Container{}, fmt.Errorf("couldn't unmarshal container: %w", err)
 	}
 	return container, nil
@@ -224,10 +221,8 @@ func (i *index) getContainerByIndexBytes(indexBytes []byte) (Container, error) {
 // [numToFetch] should be in [0, MaxFetchedByRange]
 func (i *index) GetContainerRange(startIndex, numToFetch uint64) ([]Container, error) {
 	// Check arguments for validity
-	if numToFetch == 0 {
-		return nil, errNumToFetchZero
-	} else if numToFetch > MaxFetchedByRange {
-		return nil, fmt.Errorf("requested %d but maximum page size is %d", numToFetch, MaxFetchedByRange)
+	if numToFetch == 0 || numToFetch > MaxFetchedByRange {
+		return nil, fmt.Errorf("%w but is %d", errNumToFetchInvalid, numToFetch)
 	}
 
 	i.lock.RLock()
@@ -241,7 +236,7 @@ func (i *index) GetContainerRange(startIndex, numToFetch uint64) ([]Container, e
 	}
 
 	// Calculate the last index we will fetch
-	lastIndex := math.Min64(startIndex+numToFetch-1, lastAcceptedIndex)
+	lastIndex := math.Min(startIndex+numToFetch-1, lastAcceptedIndex)
 	// [lastIndex] is always >= [startIndex] so this is safe.
 	// [numToFetch] is limited to [MaxFetchedByRange] so [containers] is bounded in size.
 	containers := make([]Container, int(lastIndex)-int(startIndex)+1)
@@ -293,9 +288,10 @@ func (i *index) GetLastAccepted() (Container, error) {
 
 // Assumes i.lock is held
 // Returns:
-// 1) The index of the most recently accepted transaction,
-//    or 0 if no transactions have been accepted
-// 2) Whether at least 1 transaction has been accepted
+//
+//  1. The index of the most recently accepted transaction, or 0 if no
+//     transactions have been accepted
+//  2. Whether at least 1 transaction has been accepted
 func (i *index) lastAcceptedIndex() (uint64, bool) {
 	return i.nextAcceptedIndex - 1, i.nextAcceptedIndex != 0
 }

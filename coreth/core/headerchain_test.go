@@ -39,7 +39,6 @@ import (
 	"github.com/ava-labs/coreth/core/vm"
 	"github.com/ava-labs/coreth/params"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/log"
 )
 
 func verifyUnbrokenCanonchain(bc *BlockChain) error {
@@ -74,16 +73,19 @@ func testInsert(t *testing.T, bc *BlockChain, chain []*types.Block, wantErr erro
 // This test checks status reporting of InsertHeaderChain.
 func TestHeaderInsertion(t *testing.T) {
 	var (
-		db      = rawdb.NewMemoryDatabase()
-		genesis = (&Genesis{
+		db    = rawdb.NewMemoryDatabase()
+		gspec = &Genesis{
 			BaseFee: big.NewInt(params.ApricotPhase3InitialBaseFee),
 			Config:  params.TestChainConfig,
-		}).MustCommit(db)
+		}
 	)
-	chain, err := NewBlockChain(db, DefaultCacheConfig, params.TestChainConfig, dummy.NewFaker(), vm.Config{}, common.Hash{})
+	genesis := gspec.ToBlock()
+	chain, err := NewBlockChain(db, DefaultCacheConfig, gspec, dummy.NewFaker(), vm.Config{}, common.Hash{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer chain.Stop()
+
 	// chain A: G->A1->A2...A128
 	chainA, _, _ := GenerateChain(params.TestChainConfig, types.NewBlockWithHeader(genesis.Header()), dummy.NewFaker(), db, 128, 10, func(i int, b *BlockGen) {
 		b.SetCoinbase(common.Address{0: byte(10), 19: byte(i)})
@@ -92,7 +94,6 @@ func TestHeaderInsertion(t *testing.T) {
 	chainB, _, _ := GenerateChain(params.TestChainConfig, types.NewBlockWithHeader(chainA[0].Header()), dummy.NewFaker(), db, 128, 10, func(i int, b *BlockGen) {
 		b.SetCoinbase(common.Address{0: byte(10), 19: byte(i)})
 	})
-	log.Root().SetHandler(log.StdoutHandler)
 
 	// Inserting 64 headers on an empty chain
 	testInsert(t, chain, chainA[:64], nil)

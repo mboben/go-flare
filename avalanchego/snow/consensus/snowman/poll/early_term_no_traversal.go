@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package poll
@@ -7,22 +7,28 @@ import (
 	"fmt"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/utils/bag"
 )
 
 type earlyTermNoTraversalFactory struct {
-	alpha int
+	alphaPreference int
+	alphaConfidence int
 }
 
 // NewEarlyTermNoTraversalFactory returns a factory that returns polls with
 // early termination, without doing DAG traversals
-func NewEarlyTermNoTraversalFactory(alpha int) Factory {
-	return &earlyTermNoTraversalFactory{alpha: alpha}
+func NewEarlyTermNoTraversalFactory(alphaPreference int, alphaConfidence int) Factory {
+	return &earlyTermNoTraversalFactory{
+		alphaPreference: alphaPreference,
+		alphaConfidence: alphaConfidence,
+	}
 }
 
-func (f *earlyTermNoTraversalFactory) New(vdrs ids.NodeIDBag) Poll {
+func (f *earlyTermNoTraversalFactory) New(vdrs bag.Bag[ids.NodeID]) Poll {
 	return &earlyTermNoTraversalPoll{
-		polled: vdrs,
-		alpha:  f.alpha,
+		polled:          vdrs,
+		alphaPreference: f.alphaPreference,
+		alphaConfidence: f.alphaConfidence,
 	}
 }
 
@@ -30,9 +36,10 @@ func (f *earlyTermNoTraversalFactory) New(vdrs ids.NodeIDBag) Poll {
 // the result of the poll. However, does not terminate tightly with this bound.
 // It terminates as quickly as it can without performing any DAG traversals.
 type earlyTermNoTraversalPoll struct {
-	votes  ids.Bag
-	polled ids.NodeIDBag
-	alpha  int
+	votes           bag.Bag[ids.ID]
+	polled          bag.Bag[ids.NodeID]
+	alphaPreference int
+	alphaConfidence int
 }
 
 // Vote registers a response for this poll
@@ -50,18 +57,36 @@ func (p *earlyTermNoTraversalPoll) Drop(vdr ids.NodeID) {
 	p.polled.Remove(vdr)
 }
 
-// Finished returns true when all validators have voted
+// Finished returns true when one of the following conditions is met.
+//
+//  1. There are no outstanding votes.
+//  2. It is impossible for the poll to achieve an alphaPreference majority
+//     after applying transitive voting.
+//  3. A single element has achieved an alphaPreference majority and it is
+//     impossible for it to achieve an alphaConfidence majority after applying
+//     transitive voting.
+//  4. A single element has achieved an alphaConfidence majority.
 func (p *earlyTermNoTraversalPoll) Finished() bool {
 	remaining := p.polled.Len()
+	if remaining == 0 {
+		return true // Case 1
+	}
+
 	received := p.votes.Len()
+	maxPossibleVotes := received + remaining
+	if maxPossibleVotes < p.alphaPreference {
+		return true // Case 2
+	}
+
 	_, freq := p.votes.Mode()
-	return remaining == 0 || // All k nodes responded
-		freq >= p.alpha || // An alpha majority has returned
-		received+remaining < p.alpha // An alpha majority can never return
+	return freq >= p.alphaPreference && maxPossibleVotes < p.alphaConfidence || // Case 3
+		freq >= p.alphaConfidence // Case 4
 }
 
 // Result returns the result of this poll
-func (p *earlyTermNoTraversalPoll) Result() ids.Bag { return p.votes }
+func (p *earlyTermNoTraversalPoll) Result() bag.Bag[ids.ID] {
+	return p.votes
+}
 
 func (p *earlyTermNoTraversalPoll) PrefixedString(prefix string) string {
 	return fmt.Sprintf(
@@ -72,4 +97,6 @@ func (p *earlyTermNoTraversalPoll) PrefixedString(prefix string) string {
 	)
 }
 
-func (p *earlyTermNoTraversalPoll) String() string { return p.PrefixedString("") }
+func (p *earlyTermNoTraversalPoll) String() string {
+	return p.PrefixedString("")
+}

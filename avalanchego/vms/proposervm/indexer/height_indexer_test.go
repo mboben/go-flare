@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package indexer
@@ -68,14 +68,16 @@ func TestHeightBlockIndexPostFork(t *testing.T) {
 		CantGetFullPostForkBlock: true,
 		CantCommit:               true,
 
-		GetFullPostForkBlockF: func(blkID ids.ID) (snowman.Block, error) {
+		GetFullPostForkBlockF: func(_ context.Context, blkID ids.ID) (snowman.Block, error) {
 			blk, found := proBlks[blkID]
 			if !found {
 				return nil, database.ErrNotFound
 			}
 			return blk, nil
 		},
-		CommitF: func() error { return nil },
+		CommitF: func() error {
+			return nil
+		},
 	}
 
 	hIndex := newHeightIndexer(blkSrv,
@@ -92,7 +94,7 @@ func TestHeightBlockIndexPostFork(t *testing.T) {
 	// check that height index is fully built
 	loadedForkHeight, err := storedState.GetForkHeight()
 	require.NoError(err)
-	require.True(loadedForkHeight == 1)
+	require.Equal(uint64(1), loadedForkHeight)
 	for height := uint64(1); height <= blkNumber; height++ {
 		_, err := storedState.GetBlockIDAtHeight(height)
 		require.NoError(err)
@@ -146,14 +148,16 @@ func TestHeightBlockIndexAcrossFork(t *testing.T) {
 		CantGetFullPostForkBlock: true,
 		CantCommit:               true,
 
-		GetFullPostForkBlockF: func(blkID ids.ID) (snowman.Block, error) {
+		GetFullPostForkBlockF: func(_ context.Context, blkID ids.ID) (snowman.Block, error) {
 			blk, found := proBlks[blkID]
 			if !found {
 				return nil, database.ErrNotFound
 			}
 			return blk, nil
 		},
-		CommitF: func() error { return nil },
+		CommitF: func() error {
+			return nil
+		},
 	}
 
 	hIndex := newHeightIndexer(blkSrv,
@@ -170,10 +174,10 @@ func TestHeightBlockIndexAcrossFork(t *testing.T) {
 	// check that height index is fully built
 	loadedForkHeight, err := storedState.GetForkHeight()
 	require.NoError(err)
-	require.True(loadedForkHeight == forkHeight)
+	require.Equal(forkHeight, loadedForkHeight)
 	for height := uint64(0); height < forkHeight; height++ {
 		_, err := storedState.GetBlockIDAtHeight(height)
-		require.Error(err, database.ErrNotFound)
+		require.ErrorIs(err, database.ErrNotFound)
 	}
 	for height := forkHeight; height <= blkNumber; height++ {
 		_, err := storedState.GetBlockIDAtHeight(height)
@@ -228,14 +232,16 @@ func TestHeightBlockIndexResumeFromCheckPoint(t *testing.T) {
 		CantGetFullPostForkBlock: true,
 		CantCommit:               true,
 
-		GetFullPostForkBlockF: func(blkID ids.ID) (snowman.Block, error) {
+		GetFullPostForkBlockF: func(_ context.Context, blkID ids.ID) (snowman.Block, error) {
 			blk, found := proBlks[blkID]
 			if !found {
 				return nil, database.ErrNotFound
 			}
 			return blk, nil
 		},
-		CommitF: func() error { return nil },
+		CommitF: func() error {
+			return nil
+		},
 	}
 
 	hIndex := newHeightIndexer(blkSrv,
@@ -264,7 +270,7 @@ func TestHeightBlockIndexResumeFromCheckPoint(t *testing.T) {
 	// check that height index is fully built
 	loadedForkHeight, err := storedState.GetForkHeight()
 	require.NoError(err)
-	require.True(loadedForkHeight == forkHeight)
+	require.Equal(forkHeight, loadedForkHeight)
 	for height := forkHeight; height <= checkpointBlk.Height(); height++ {
 		_, err := storedState.GetBlockIDAtHeight(height)
 		require.NoError(err)

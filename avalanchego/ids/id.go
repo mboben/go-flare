@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package ids
@@ -8,8 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"sort"
-	"strings"
 
 	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/cb58"
@@ -17,17 +15,22 @@ import (
 	"github.com/ava-labs/avalanchego/utils/wrappers"
 )
 
-const nullStr = "null"
+const (
+	IDLen   = 32
+	nullStr = "null"
+)
 
 var (
 	// Empty is a useful all zero value
 	Empty = ID{}
 
 	errMissingQuotes = errors.New("first and last characters should be quotes")
+
+	_ utils.Sortable[ID] = ID{}
 )
 
 // ID wraps a 32 byte hash used as an identifier
-type ID [32]byte
+type ID [IDLen]byte
 
 // ToID attempt to convert a byte slice into an id
 func ToID(bytes []byte) (ID, error) {
@@ -84,7 +87,7 @@ func (id *ID) UnmarshalText(text []byte) error {
 // This will return a new id and not modify the original id.
 func (id ID) Prefix(prefixes ...uint64) ID {
 	packer := wrappers.Packer{
-		Bytes: make([]byte, len(prefixes)*wrappers.LongLen+hashing.HashLen),
+		Bytes: make([]byte, len(prefixes)*wrappers.LongLen+IDLen),
 	}
 
 	for _, prefix := range prefixes {
@@ -93,6 +96,16 @@ func (id ID) Prefix(prefixes ...uint64) ID {
 	packer.PackFixedBytes(id[:])
 
 	return hashing.ComputeHash256Array(packer.Bytes)
+}
+
+// XOR this id and the provided id and return the resulting id.
+//
+// Note: this id is not modified.
+func (id ID) XOR(other ID) ID {
+	for i, b := range other {
+		id[i] ^= b
+	}
+	return id
 }
 
 // Bit returns the bit value at the ith index of the byte array. Returns 0 or 1
@@ -117,7 +130,9 @@ func (id ID) Bit(i uint) int {
 }
 
 // Hex returns a hex encoded string of this id.
-func (id ID) Hex() string { return hex.EncodeToString(id[:]) }
+func (id ID) Hex() string {
+	return hex.EncodeToString(id[:])
+}
 
 func (id ID) String() string {
 	// We assume that the maximum size of a byte slice that
@@ -130,31 +145,6 @@ func (id ID) MarshalText() ([]byte, error) {
 	return []byte(id.String()), nil
 }
 
-type SliceStringer []ID
-
-func (s SliceStringer) String() string {
-	var strs strings.Builder
-	for i, id := range s {
-		if i != 0 {
-			_, _ = strs.WriteString(", ")
-		}
-		_, _ = strs.WriteString(id.String())
-	}
-	return strs.String()
+func (id ID) Less(other ID) bool {
+	return bytes.Compare(id[:], other[:]) < 0
 }
-
-type sortIDData []ID
-
-func (ids sortIDData) Less(i, j int) bool {
-	return bytes.Compare(
-		ids[i][:],
-		ids[j][:]) == -1
-}
-func (ids sortIDData) Len() int      { return len(ids) }
-func (ids sortIDData) Swap(i, j int) { ids[j], ids[i] = ids[i], ids[j] }
-
-// SortIDs sorts the ids lexicographically
-func SortIDs(ids []ID) { sort.Sort(sortIDData(ids)) }
-
-// IsSortedAndUniqueIDs returns true if the ids are sorted and unique
-func IsSortedAndUniqueIDs(ids []ID) bool { return utils.IsSortedAndUnique(sortIDData(ids)) }

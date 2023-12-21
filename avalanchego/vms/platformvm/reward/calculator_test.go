@@ -1,12 +1,15 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package reward
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/utils/units"
 )
@@ -34,8 +37,8 @@ func TestLongerDurationBonus(t *testing.T) {
 		r := c.Calculate(shortDuration, shortBalance, 359*units.MegaAvax+shortBalance)
 		shortBalance += r
 	}
-	r := c.Calculate(totalDuration%shortDuration, shortBalance, 359*units.MegaAvax+shortBalance)
-	shortBalance += r
+	reward := c.Calculate(totalDuration%shortDuration, shortBalance, 359*units.MegaAvax+shortBalance)
+	shortBalance += reward
 
 	longBalance := units.KiloAvax
 	longBalance += c.Calculate(totalDuration, longBalance, 359*units.MegaAvax+longBalance)
@@ -123,14 +126,113 @@ func TestRewards(t *testing.T) {
 			test.expectedReward,
 		)
 		t.Run(name, func(t *testing.T) {
-			r := c.Calculate(
+			reward := c.Calculate(
 				test.duration,
 				test.stakeAmount,
 				test.existingAmount,
 			)
-			if r != test.expectedReward {
-				t.Fatalf("expected %d; got %d", test.expectedReward, r)
-			}
+			require.Equal(t, test.expectedReward, reward)
+		})
+	}
+}
+
+func TestRewardsOverflow(t *testing.T) {
+	var (
+		maxSupply     uint64 = math.MaxUint64
+		initialSupply uint64 = 1
+	)
+	c := NewCalculator(Config{
+		MaxConsumptionRate: PercentDenominator,
+		MinConsumptionRate: PercentDenominator,
+		MintingPeriod:      defaultMinStakingDuration,
+		SupplyCap:          maxSupply,
+	})
+	reward := c.Calculate(
+		defaultMinStakingDuration,
+		maxSupply, // The staked amount is larger than the current supply
+		initialSupply,
+	)
+	require.Equal(t, maxSupply-initialSupply, reward)
+}
+
+func TestRewardsMint(t *testing.T) {
+	var (
+		maxSupply     uint64 = 1000
+		initialSupply uint64 = 1
+	)
+	c := NewCalculator(Config{
+		MaxConsumptionRate: PercentDenominator,
+		MinConsumptionRate: PercentDenominator,
+		MintingPeriod:      defaultMinStakingDuration,
+		SupplyCap:          maxSupply,
+	})
+	rewards := c.Calculate(
+		defaultMinStakingDuration,
+		maxSupply, // The staked amount is larger than the current supply
+		initialSupply,
+	)
+	require.Equal(t, maxSupply-initialSupply, rewards)
+}
+
+func TestSplit(t *testing.T) {
+	tests := []struct {
+		amount        uint64
+		shares        uint32
+		expectedSplit uint64
+	}{
+		{
+			amount:        1000,
+			shares:        PercentDenominator / 2,
+			expectedSplit: 500,
+		},
+		{
+			amount:        1,
+			shares:        PercentDenominator,
+			expectedSplit: 1,
+		},
+		{
+			amount:        1,
+			shares:        PercentDenominator - 1,
+			expectedSplit: 1,
+		},
+		{
+			amount:        1,
+			shares:        1,
+			expectedSplit: 1,
+		},
+		{
+			amount:        1,
+			shares:        0,
+			expectedSplit: 0,
+		},
+		{
+			amount:        9223374036974675809,
+			shares:        2,
+			expectedSplit: 18446748749757,
+		},
+		{
+			amount:        9223374036974675809,
+			shares:        PercentDenominator,
+			expectedSplit: 9223374036974675809,
+		},
+		{
+			amount:        9223372036855275808,
+			shares:        PercentDenominator - 2,
+			expectedSplit: 9223353590111202098,
+		},
+		{
+			amount:        9223372036855275808,
+			shares:        2,
+			expectedSplit: 18446744349518,
+		},
+	}
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("%d_%d", test.amount, test.shares), func(t *testing.T) {
+			require := require.New(t)
+
+			split, remainder := Split(test.amount, test.shares)
+			require.Equal(test.expectedSplit, split)
+			require.Equal(test.amount-test.expectedSplit, remainder)
 		})
 	}
 }

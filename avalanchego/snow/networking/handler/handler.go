@@ -1,56 +1,80 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package handler
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"go.uber.org/zap"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/ava-labs/avalanchego/api/health"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/message"
+	"github.com/ava-labs/avalanchego/proto/pb/p2p"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/networking/tracker"
-	"github.com/ava-labs/avalanchego/snow/networking/worker"
 	"github.com/ava-labs/avalanchego/snow/validators"
+	"github.com/ava-labs/avalanchego/subnets"
+	"github.com/ava-labs/avalanchego/utils"
+	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/timer/mockable"
-	"github.com/ava-labs/avalanchego/version"
+
+	commontracker "github.com/ava-labs/avalanchego/snow/engine/common/tracker"
 )
 
 const (
-	threadPoolSize        = 2
 	numDispatchersToClose = 3
+	// If a consensus message takes longer than this to process, the handler
+	// will log a warning.
+	syncProcessingTimeWarnLimit = 30 * time.Second
 )
 
-var _ Handler = &handler{}
+var (
+	_ Handler = (*handler)(nil)
+
+	errMissingEngine  = errors.New("missing engine")
+	errNoStartingGear = errors.New("failed to select starting gear")
+)
 
 type Handler interface {
 	common.Timer
 	health.Checker
 
 	Context() *snow.ConsensusContext
-	IsValidator(nodeID ids.NodeID) bool
+	// ShouldHandle returns true if the node with the given ID is allowed to send
+	// messages to this chain. If the node is not allowed to send messages to
+	// this chain, the message should be dropped.
+	ShouldHandle(nodeID ids.NodeID) bool
 
-	SetStateSyncer(engine common.StateSyncer)
-	StateSyncer() common.StateSyncer
-	SetBootstrapper(engine common.BootstrapableEngine)
-	Bootstrapper() common.BootstrapableEngine
-	SetConsensus(engine common.Engine)
-	Consensus() common.Engine
+	SetEngineManager(engineManager *EngineManager)
+	GetEngineManager() *EngineManager
 
 	SetOnStopped(onStopped func())
-	Start(recoverPanic bool)
-	Push(msg message.InboundMessage)
-	Stop()
-	StopWithError(err error)
-	Stopped() chan struct{}
+	Start(ctx context.Context, recoverPanic bool)
+	Push(ctx context.Context, msg Message)
+	Len() int
+
+	Stop(ctx context.Context)
+	StopWithError(ctx context.Context, err error)
+	// AwaitStopped returns an error if the call would block and [ctx] is done.
+	// Even if [ctx] is done when passed into this function, this function will
+	// return a nil error if it will not block.
+	AwaitStopped(ctx context.Context) (time.Duration, error)
 }
 
 // handler passes incoming messages from the network to the consensus engine.
@@ -62,17 +86,16 @@ type handler struct {
 	clock mockable.Clock
 
 	ctx *snow.ConsensusContext
-	mc  message.Creator
-	// The validator set that validates this chain
-	validators validators.Set
+	// TODO: consider using peerTracker instead of validators
+	// since peerTracker is already tracking validators
+	validators validators.Manager
 	// Receives messages from the VM
 	msgFromVMChan   <-chan common.Message
 	preemptTimeouts chan struct{}
 	gossipFrequency time.Duration
 
-	stateSyncer  common.StateSyncer
-	bootstrapper common.BootstrapableEngine
-	engine       common.Engine
+	engineManager *EngineManager
+
 	// onStopped is called in a goroutine when this handler finishes shutting
 	// down. If it is nil then it is skipped.
 	onStopped func()
@@ -87,40 +110,53 @@ type handler struct {
 	// [unprocessedAsyncMsgsCond.L] must be held while accessing [asyncMessageQueue].
 	asyncMessageQueue MessageQueue
 	// Worker pool for handling asynchronous consensus messages
-	asyncMessagePool worker.Pool
+	asyncMessagePool errgroup.Group
 	timeouts         chan struct{}
 
 	closeOnce            sync.Once
+	startClosingTime     time.Time
+	totalClosingTime     time.Duration
 	closingChan          chan struct{}
-	numDispatchersClosed int
+	numDispatchersClosed atomic.Uint32
 	// Closed when this handler and [engine] are done shutting down
 	closed chan struct{}
+
+	subnetConnector validators.SubnetConnector
+
+	subnet subnets.Subnet
+
+	// Tracks the peers that are currently connected to this subnet
+	peerTracker commontracker.Peers
 }
 
 // Initialize this consensus handler
 // [engine] must be initialized before initializing this handler
 func New(
-	mc message.Creator,
 	ctx *snow.ConsensusContext,
-	validators validators.Set,
+	validators validators.Manager,
 	msgFromVMChan <-chan common.Message,
-	preemptTimeouts chan struct{},
 	gossipFrequency time.Duration,
+	threadPoolSize int,
 	resourceTracker tracker.ResourceTracker,
+	subnetConnector validators.SubnetConnector,
+	subnet subnets.Subnet,
+	peerTracker commontracker.Peers,
 ) (Handler, error) {
 	h := &handler{
-		ctx:              ctx,
-		mc:               mc,
-		validators:       validators,
-		msgFromVMChan:    msgFromVMChan,
-		preemptTimeouts:  preemptTimeouts,
-		gossipFrequency:  gossipFrequency,
-		asyncMessagePool: worker.NewPool(threadPoolSize),
-		timeouts:         make(chan struct{}, 1),
-		closingChan:      make(chan struct{}),
-		closed:           make(chan struct{}),
-		resourceTracker:  resourceTracker,
+		ctx:             ctx,
+		validators:      validators,
+		msgFromVMChan:   msgFromVMChan,
+		preemptTimeouts: subnet.OnBootstrapCompleted(),
+		gossipFrequency: gossipFrequency,
+		timeouts:        make(chan struct{}, 1),
+		closingChan:     make(chan struct{}),
+		closed:          make(chan struct{}),
+		resourceTracker: resourceTracker,
+		subnetConnector: subnetConnector,
+		subnet:          subnet,
+		peerTracker:     peerTracker,
 	}
+	h.asyncMessagePool.SetLimit(threadPoolSize)
 
 	var err error
 
@@ -129,112 +165,122 @@ func New(
 		return nil, fmt.Errorf("initializing handler metrics errored with: %w", err)
 	}
 	cpuTracker := resourceTracker.CPUTracker()
-	h.syncMessageQueue, err = NewMessageQueue(h.ctx.Log, h.validators, cpuTracker, "handler", h.ctx.Registerer, message.SynchronousOps)
+	h.syncMessageQueue, err = NewMessageQueue(h.ctx, h.validators, cpuTracker, "handler", message.SynchronousOps)
 	if err != nil {
 		return nil, fmt.Errorf("initializing sync message queue errored with: %w", err)
 	}
-	h.asyncMessageQueue, err = NewMessageQueue(h.ctx.Log, h.validators, cpuTracker, "handler_async", h.ctx.Registerer, message.AsynchronousOps)
+	h.asyncMessageQueue, err = NewMessageQueue(h.ctx, h.validators, cpuTracker, "handler_async", message.AsynchronousOps)
 	if err != nil {
 		return nil, fmt.Errorf("initializing async message queue errored with: %w", err)
 	}
 	return h, nil
 }
 
-func (h *handler) Context() *snow.ConsensusContext { return h.ctx }
-
-func (h *handler) IsValidator(nodeID ids.NodeID) bool {
-	return !h.ctx.IsValidatorOnly() ||
-		nodeID == h.ctx.NodeID ||
-		h.validators.Contains(nodeID)
+func (h *handler) Context() *snow.ConsensusContext {
+	return h.ctx
 }
 
-func (h *handler) SetStateSyncer(engine common.StateSyncer) { h.stateSyncer = engine }
-func (h *handler) StateSyncer() common.StateSyncer          { return h.stateSyncer }
+func (h *handler) ShouldHandle(nodeID ids.NodeID) bool {
+	_, ok := h.validators.GetValidator(h.ctx.SubnetID, nodeID)
+	return h.subnet.IsAllowed(nodeID, ok)
+}
 
-func (h *handler) SetBootstrapper(engine common.BootstrapableEngine) { h.bootstrapper = engine }
-func (h *handler) Bootstrapper() common.BootstrapableEngine          { return h.bootstrapper }
+func (h *handler) SetEngineManager(engineManager *EngineManager) {
+	h.engineManager = engineManager
+}
 
-func (h *handler) SetConsensus(engine common.Engine) { h.engine = engine }
-func (h *handler) Consensus() common.Engine          { return h.engine }
+func (h *handler) GetEngineManager() *EngineManager {
+	return h.engineManager
+}
 
-func (h *handler) SetOnStopped(onStopped func()) { h.onStopped = onStopped }
+func (h *handler) SetOnStopped(onStopped func()) {
+	h.onStopped = onStopped
+}
 
-func (h *handler) selectStartingGear() (common.Engine, error) {
-	if h.stateSyncer == nil {
-		return h.bootstrapper, nil
+func (h *handler) selectStartingGear(ctx context.Context) (common.Engine, error) {
+	state := h.ctx.State.Get()
+	engines := h.engineManager.Get(state.Type)
+	if engines == nil {
+		return nil, errNoStartingGear
+	}
+	if engines.StateSyncer == nil {
+		return engines.Bootstrapper, nil
 	}
 
-	stateSyncEnabled, err := h.stateSyncer.IsEnabled()
+	stateSyncEnabled, err := engines.StateSyncer.IsEnabled(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	if !stateSyncEnabled {
-		return h.bootstrapper, nil
+		return engines.Bootstrapper, nil
 	}
 
-	// drop bootstrap state from previous runs
-	// before starting state sync
-	return h.stateSyncer, h.bootstrapper.Clear()
+	// drop bootstrap state from previous runs before starting state sync
+	return engines.StateSyncer, engines.Bootstrapper.Clear(ctx)
 }
 
-func (h *handler) Start(recoverPanic bool) {
-	h.ctx.Lock.Lock()
-	defer h.ctx.Lock.Unlock()
-
-	gear, err := h.selectStartingGear()
+func (h *handler) Start(ctx context.Context, recoverPanic bool) {
+	gear, err := h.selectStartingGear(ctx)
 	if err != nil {
 		h.ctx.Log.Error("chain failed to select starting gear",
 			zap.Error(err),
 		)
-		h.shutdown()
+		h.shutdown(ctx, h.clock.Time())
 		return
 	}
 
-	if err := gear.Start(0); err != nil {
+	h.ctx.Lock.Lock()
+	err = gear.Start(ctx, 0)
+	h.ctx.Lock.Unlock()
+	if err != nil {
 		h.ctx.Log.Error("chain failed to start",
 			zap.Error(err),
 		)
-		h.shutdown()
+		h.shutdown(ctx, h.clock.Time())
 		return
 	}
 
+	detachedCtx := utils.Detach(ctx)
+	dispatchSync := func() {
+		h.dispatchSync(detachedCtx)
+	}
+	dispatchAsync := func() {
+		h.dispatchAsync(detachedCtx)
+	}
+	dispatchChans := func() {
+		h.dispatchChans(detachedCtx)
+	}
 	if recoverPanic {
-		go h.ctx.Log.RecoverAndExit(h.dispatchSync, func() {
+		go h.ctx.Log.RecoverAndExit(dispatchSync, func() {
 			h.ctx.Log.Error("chain was shutdown due to a panic in the sync dispatcher")
 		})
-		go h.ctx.Log.RecoverAndExit(h.dispatchAsync, func() {
+		go h.ctx.Log.RecoverAndExit(dispatchAsync, func() {
 			h.ctx.Log.Error("chain was shutdown due to a panic in the async dispatcher")
 		})
-		go h.ctx.Log.RecoverAndExit(h.dispatchChans, func() {
+		go h.ctx.Log.RecoverAndExit(dispatchChans, func() {
 			h.ctx.Log.Error("chain was shutdown due to a panic in the chan dispatcher")
 		})
 	} else {
-		go h.ctx.Log.RecoverAndPanic(h.dispatchSync)
-		go h.ctx.Log.RecoverAndPanic(h.dispatchAsync)
-		go h.ctx.Log.RecoverAndPanic(h.dispatchChans)
+		go h.ctx.Log.RecoverAndPanic(dispatchSync)
+		go h.ctx.Log.RecoverAndPanic(dispatchAsync)
+		go h.ctx.Log.RecoverAndPanic(dispatchChans)
 	}
-}
-
-func (h *handler) HealthCheck() (interface{}, error) {
-	h.ctx.Lock.Lock()
-	defer h.ctx.Lock.Unlock()
-
-	engine, err := h.getEngine()
-	if err != nil {
-		return nil, err
-	}
-	return engine.HealthCheck()
 }
 
 // Push the message onto the handler's queue
-func (h *handler) Push(msg message.InboundMessage) {
+func (h *handler) Push(ctx context.Context, msg Message) {
 	switch msg.Op() {
-	case message.AppRequest, message.AppGossip, message.AppRequestFailed, message.AppResponse:
-		h.asyncMessageQueue.Push(msg)
+	case message.AppRequestOp, message.AppRequestFailedOp, message.AppResponseOp, message.AppGossipOp,
+		message.CrossChainAppRequestOp, message.CrossChainAppRequestFailedOp, message.CrossChainAppResponseOp:
+		h.asyncMessageQueue.Push(ctx, msg)
 	default:
-		h.syncMessageQueue.Push(msg)
+		h.syncMessageQueue.Push(ctx, msg)
 	}
+}
+
+func (h *handler) Len() int {
+	return h.syncMessageQueue.Len() + h.asyncMessageQueue.Len()
 }
 
 func (h *handler) RegisterTimeout(d time.Duration) {
@@ -257,8 +303,13 @@ func (h *handler) RegisterTimeout(d time.Duration) {
 	}()
 }
 
-func (h *handler) Stop() {
+// Note: It is possible for Stop to be called before/concurrently with Start.
+//
+// Invariant: Stop must never block.
+func (h *handler) Stop(ctx context.Context) {
 	h.closeOnce.Do(func() {
+		h.startClosingTime = h.clock.Time()
+
 		// Must hold the locks here to ensure there's no race condition in where
 		// we check the value of [h.closing] after the call to [Signal].
 		h.syncMessageQueue.Shutdown()
@@ -274,35 +325,56 @@ func (h *handler) Stop() {
 		// [h.ctx.Lock] until the engine finished executing state transitions,
 		// which may take a long time. As a result, the router would time out on
 		// shutting down this chain.
-		h.bootstrapper.Halt()
+		state := h.ctx.State.Get()
+		bootstrapper, ok := h.engineManager.Get(state.Type).Get(snow.Bootstrapping)
+		if !ok {
+			h.ctx.Log.Error("bootstrapping engine doesn't exist",
+				zap.Stringer("type", state.Type),
+			)
+			return
+		}
+		bootstrapper.Halt(ctx)
 	})
 }
 
-func (h *handler) StopWithError(err error) {
+func (h *handler) StopWithError(ctx context.Context, err error) {
 	h.ctx.Log.Fatal("shutting down chain",
 		zap.String("reason", "received an unexpected error"),
 		zap.Error(err),
 	)
-	h.Stop()
+	h.Stop(ctx)
 }
 
-func (h *handler) Stopped() chan struct{} { return h.closed }
+func (h *handler) AwaitStopped(ctx context.Context) (time.Duration, error) {
+	select {
+	case <-h.closed:
+		return h.totalClosingTime, nil
+	default:
+	}
 
-func (h *handler) dispatchSync() {
-	defer h.closeDispatcher()
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-h.closed:
+		return h.totalClosingTime, nil
+	}
+}
+
+func (h *handler) dispatchSync(ctx context.Context) {
+	defer h.closeDispatcher(ctx)
 
 	// Handle sync messages from the router
 	for {
 		// Get the next message we should process. If the handler is shutting
 		// down, we may fail to pop a message.
-		msg, ok := h.popUnexpiredMsg(h.syncMessageQueue, h.metrics.expired)
+		ctx, msg, ok := h.popUnexpiredMsg(h.syncMessageQueue, h.metrics.expired)
 		if !ok {
 			return
 		}
 
 		// If there is an error handling the message, shut down the chain
-		if err := h.handleSyncMsg(msg); err != nil {
-			h.StopWithError(fmt.Errorf(
+		if err := h.handleSyncMsg(ctx, msg); err != nil {
+			h.StopWithError(ctx, fmt.Errorf(
 				"%w while processing sync message: %s",
 				err,
 				msg,
@@ -312,30 +384,32 @@ func (h *handler) dispatchSync() {
 	}
 }
 
-func (h *handler) dispatchAsync() {
+func (h *handler) dispatchAsync(ctx context.Context) {
 	defer func() {
-		h.asyncMessagePool.Shutdown()
-		h.closeDispatcher()
+		// We never return an error in any of our functions, so it is safe to
+		// drop any error here.
+		_ = h.asyncMessagePool.Wait()
+		h.closeDispatcher(ctx)
 	}()
 
 	// Handle async messages from the router
 	for {
 		// Get the next message we should process. If the handler is shutting
 		// down, we may fail to pop a message.
-		msg, ok := h.popUnexpiredMsg(h.asyncMessageQueue, h.metrics.asyncExpired)
+		ctx, msg, ok := h.popUnexpiredMsg(h.asyncMessageQueue, h.metrics.asyncExpired)
 		if !ok {
 			return
 		}
 
-		h.handleAsyncMsg(msg)
+		h.handleAsyncMsg(ctx, msg)
 	}
 }
 
-func (h *handler) dispatchChans() {
+func (h *handler) dispatchChans(ctx context.Context) {
 	gossiper := time.NewTicker(h.gossipFrequency)
 	defer func() {
 		gossiper.Stop()
-		h.closeDispatcher()
+		h.closeDispatcher(ctx)
 	}()
 
 	// Handle messages generated by the handler and the VM
@@ -346,18 +420,18 @@ func (h *handler) dispatchChans() {
 			return
 
 		case vmMSG := <-h.msgFromVMChan:
-			msg = h.mc.InternalVMMessage(h.ctx.NodeID, uint32(vmMSG))
+			msg = message.InternalVMMessage(h.ctx.NodeID, uint32(vmMSG))
 
 		case <-gossiper.C:
-			msg = h.mc.InternalGossipRequest(h.ctx.NodeID)
+			msg = message.InternalGossipRequest(h.ctx.NodeID)
 
 		case <-h.timeouts:
-			msg = h.mc.InternalTimeout(h.ctx.NodeID)
+			msg = message.InternalTimeout(h.ctx.NodeID)
 		}
 
 		if err := h.handleChanMsg(msg); err != nil {
-			h.StopWithError(fmt.Errorf(
-				"%w while processing async message: %s",
+			h.StopWithError(ctx, fmt.Errorf(
+				"%w while processing chan message: %s",
 				err,
 				msg,
 			))
@@ -366,219 +440,325 @@ func (h *handler) dispatchChans() {
 	}
 }
 
-func (h *handler) handleSyncMsg(msg message.InboundMessage) error {
-	h.ctx.Log.Debug("forwarding sync message to consensus",
-		zap.Stringer("message", msg),
-	)
-
+// Any returned error is treated as fatal
+func (h *handler) handleSyncMsg(ctx context.Context, msg Message) error {
 	var (
 		nodeID    = msg.NodeID()
 		op        = msg.Op()
+		body      = msg.Message()
 		startTime = h.clock.Time()
+		// Check if the chain is in normal operation at the start of message
+		// execution (may change during execution)
+		isNormalOp = h.ctx.State.Get().State == snow.NormalOp
 	)
+	if h.ctx.Log.Enabled(logging.Verbo) {
+		h.ctx.Log.Verbo("forwarding sync message to consensus",
+			zap.Stringer("nodeID", nodeID),
+			zap.Stringer("messageOp", op),
+			zap.Stringer("message", body),
+		)
+	} else {
+		h.ctx.Log.Debug("forwarding sync message to consensus",
+			zap.Stringer("nodeID", nodeID),
+			zap.Stringer("messageOp", op),
+		)
+	}
 	h.resourceTracker.StartProcessing(nodeID, startTime)
 	h.ctx.Lock.Lock()
+	lockAcquiredTime := h.clock.Time()
 	defer func() {
 		h.ctx.Lock.Unlock()
 
 		var (
-			endTime   = h.clock.Time()
-			histogram = h.metrics.messages[op]
+			endTime           = h.clock.Time()
+			messageHistograms = h.metrics.messages[op]
+			processingTime    = endTime.Sub(startTime)
+			msgHandlingTime   = endTime.Sub(lockAcquiredTime)
 		)
 		h.resourceTracker.StopProcessing(nodeID, endTime)
-		histogram.Observe(float64(endTime.Sub(startTime)))
+		messageHistograms.processingTime.Observe(float64(processingTime))
+		messageHistograms.msgHandlingTime.Observe(float64(msgHandlingTime))
 		msg.OnFinishedHandling()
 		h.ctx.Log.Debug("finished handling sync message",
 			zap.Stringer("messageOp", op),
 		)
+		if processingTime > syncProcessingTimeWarnLimit && isNormalOp {
+			h.ctx.Log.Warn("handling sync message took longer than expected",
+				zap.Duration("processingTime", processingTime),
+				zap.Duration("msgHandlingTime", msgHandlingTime),
+				zap.Stringer("nodeID", nodeID),
+				zap.Stringer("messageOp", op),
+				zap.Stringer("message", body),
+			)
+		}
 	}()
 
-	engine, err := h.getEngine()
-	if err != nil {
-		return err
+	// We will attempt to pass the message to the requested type for the state
+	// we are currently in.
+	currentState := h.ctx.State.Get()
+	if msg.EngineType == p2p.EngineType_ENGINE_TYPE_SNOWMAN &&
+		currentState.Type == p2p.EngineType_ENGINE_TYPE_AVALANCHE {
+		// The peer is requesting an engine type that hasn't been initialized
+		// yet. This means we know that this isn't a response, so we can safely
+		// drop the message.
+		h.ctx.Log.Debug("dropping sync message",
+			zap.String("reason", "uninitialized engine type"),
+			zap.Stringer("messageOp", op),
+			zap.Stringer("currentEngineType", currentState.Type),
+			zap.Stringer("requestedEngineType", msg.EngineType),
+		)
+		return nil
 	}
 
-	switch op {
-	case message.GetStateSummaryFrontier:
-		reqID := msg.Get(message.RequestID).(uint32)
-		return engine.GetStateSummaryFrontier(nodeID, reqID)
+	var engineType p2p.EngineType
+	switch msg.EngineType {
+	case p2p.EngineType_ENGINE_TYPE_AVALANCHE, p2p.EngineType_ENGINE_TYPE_SNOWMAN:
+		// The peer is requesting an engine type that has been initialized, so
+		// we should attempt to honor the request.
+		engineType = msg.EngineType
+	default:
+		// Note: [msg.EngineType] may have been provided by the peer as an
+		// invalid option. I.E. not one of AVALANCHE, SNOWMAN, or UNSPECIFIED.
+		// In this case, we treat the value the same way as UNSPECIFIED.
+		//
+		// If the peer didn't request a specific engine type, we default to the
+		// current engine.
+		engineType = currentState.Type
+	}
 
-	case message.StateSummaryFrontier:
-		reqID := msg.Get(message.RequestID).(uint32)
-		summary := msg.Get(message.SummaryBytes).([]byte)
-		return engine.StateSummaryFrontier(nodeID, reqID, summary)
+	engine, ok := h.engineManager.Get(engineType).Get(currentState.State)
+	if !ok {
+		// This should only happen if the peer is not following the protocol.
+		// This can happen if the chain only has a Snowman engine and the peer
+		// requested an Avalanche engine handle the message.
+		h.ctx.Log.Debug("dropping sync message",
+			zap.String("reason", "uninitialized engine state"),
+			zap.Stringer("messageOp", op),
+			zap.Stringer("currentEngineType", currentState.Type),
+			zap.Stringer("requestedEngineType", msg.EngineType),
+			zap.Stringer("engineState", currentState.State),
+		)
+		return nil
+	}
 
-	case message.GetStateSummaryFrontierFailed:
-		reqID := msg.Get(message.RequestID).(uint32)
-		return engine.GetStateSummaryFrontierFailed(nodeID, reqID)
+	// Invariant: Response messages can never be dropped here. This is because
+	//            the timeout has already been cleared. This means the engine
+	//            should be invoked with a failure message if parsing of the
+	//            response fails.
+	switch msg := body.(type) {
+	// State messages should always be sent to the snowman engine
+	case *p2p.GetStateSummaryFrontier:
+		return engine.GetStateSummaryFrontier(ctx, nodeID, msg.RequestId)
 
-	case message.GetAcceptedStateSummary:
-		reqID := msg.Get(message.RequestID).(uint32)
-		summaryHeights, err := getSummaryHeights(msg)
+	case *p2p.StateSummaryFrontier:
+		return engine.StateSummaryFrontier(ctx, nodeID, msg.RequestId, msg.Summary)
+
+	case *message.GetStateSummaryFrontierFailed:
+		return engine.GetStateSummaryFrontierFailed(ctx, nodeID, msg.RequestID)
+
+	case *p2p.GetAcceptedStateSummary:
+		return engine.GetAcceptedStateSummary(
+			ctx,
+			nodeID,
+			msg.RequestId,
+			set.Of(msg.Heights...),
+		)
+
+	case *p2p.AcceptedStateSummary:
+		summaryIDs, err := getIDs(msg.SummaryIds)
 		if err != nil {
-			h.ctx.Log.Debug("malformed message",
-				zap.Stringer("messageOp", op),
+			h.ctx.Log.Debug("message with invalid field",
 				zap.Stringer("nodeID", nodeID),
-				zap.Uint32("requestID", reqID),
+				zap.Stringer("messageOp", message.AcceptedStateSummaryOp),
+				zap.Uint32("requestID", msg.RequestId),
+				zap.String("field", "SummaryIDs"),
+				zap.Error(err),
+			)
+			return engine.GetAcceptedStateSummaryFailed(ctx, nodeID, msg.RequestId)
+		}
+
+		return engine.AcceptedStateSummary(ctx, nodeID, msg.RequestId, summaryIDs)
+
+	case *message.GetAcceptedStateSummaryFailed:
+		return engine.GetAcceptedStateSummaryFailed(ctx, nodeID, msg.RequestID)
+
+	// Bootstrapping messages may be forwarded to either avalanche or snowman
+	// engines, depending on the EngineType field
+	case *p2p.GetAcceptedFrontier:
+		return engine.GetAcceptedFrontier(ctx, nodeID, msg.RequestId)
+
+	case *p2p.AcceptedFrontier:
+		containerID, err := ids.ToID(msg.ContainerId)
+		if err != nil {
+			h.ctx.Log.Debug("message with invalid field",
+				zap.Stringer("nodeID", nodeID),
+				zap.Stringer("messageOp", message.AcceptedFrontierOp),
+				zap.Uint32("requestID", msg.RequestId),
+				zap.String("field", "ContainerID"),
+				zap.Error(err),
+			)
+			return engine.GetAcceptedFrontierFailed(ctx, nodeID, msg.RequestId)
+		}
+
+		return engine.AcceptedFrontier(ctx, nodeID, msg.RequestId, containerID)
+
+	case *message.GetAcceptedFrontierFailed:
+		return engine.GetAcceptedFrontierFailed(ctx, nodeID, msg.RequestID)
+
+	case *p2p.GetAccepted:
+		containerIDs, err := getIDs(msg.ContainerIds)
+		if err != nil {
+			h.ctx.Log.Debug("message with invalid field",
+				zap.Stringer("nodeID", nodeID),
+				zap.Stringer("messageOp", message.GetAcceptedOp),
+				zap.Uint32("requestID", msg.RequestId),
+				zap.String("field", "ContainerIDs"),
 				zap.Error(err),
 			)
 			return nil
 		}
-		return engine.GetAcceptedStateSummary(nodeID, reqID, summaryHeights)
 
-	case message.AcceptedStateSummary:
-		reqID := msg.Get(message.RequestID).(uint32)
-		summaryIDs, err := getIDs(message.SummaryIDs, msg)
+		return engine.GetAccepted(ctx, nodeID, msg.RequestId, containerIDs)
+
+	case *p2p.Accepted:
+		containerIDs, err := getIDs(msg.ContainerIds)
 		if err != nil {
-			h.ctx.Log.Debug("malformed message",
-				zap.Stringer("messageOp", op),
+			h.ctx.Log.Debug("message with invalid field",
 				zap.Stringer("nodeID", nodeID),
-				zap.Uint32("requestID", reqID),
+				zap.Stringer("messageOp", message.AcceptedOp),
+				zap.Uint32("requestID", msg.RequestId),
+				zap.String("field", "ContainerIDs"),
 				zap.Error(err),
 			)
-			return engine.GetAcceptedStateSummaryFailed(nodeID, reqID)
+			return engine.GetAcceptedFailed(ctx, nodeID, msg.RequestId)
 		}
-		return engine.AcceptedStateSummary(nodeID, reqID, summaryIDs)
 
-	case message.GetAcceptedStateSummaryFailed:
-		reqID := msg.Get(message.RequestID).(uint32)
-		return engine.GetAcceptedStateSummaryFailed(nodeID, reqID)
+		return engine.Accepted(ctx, nodeID, msg.RequestId, containerIDs)
 
-	case message.GetAcceptedFrontier:
-		reqID := msg.Get(message.RequestID).(uint32)
-		return engine.GetAcceptedFrontier(nodeID, reqID)
+	case *message.GetAcceptedFailed:
+		return engine.GetAcceptedFailed(ctx, nodeID, msg.RequestID)
 
-	case message.AcceptedFrontier:
-		reqID := msg.Get(message.RequestID).(uint32)
-		containerIDs, err := getIDs(message.ContainerIDs, msg)
+	case *p2p.GetAncestors:
+		containerID, err := ids.ToID(msg.ContainerId)
 		if err != nil {
-			h.ctx.Log.Debug("malformed message",
-				zap.Stringer("messageOp", op),
+			h.ctx.Log.Debug("dropping message with invalid field",
 				zap.Stringer("nodeID", nodeID),
-				zap.Uint32("requestID", reqID),
-				zap.Error(err),
-			)
-			return engine.GetAcceptedFrontierFailed(nodeID, reqID)
-		}
-		return engine.AcceptedFrontier(nodeID, reqID, containerIDs)
-
-	case message.GetAcceptedFrontierFailed:
-		reqID := msg.Get(message.RequestID).(uint32)
-		return engine.GetAcceptedFrontierFailed(nodeID, reqID)
-
-	case message.GetAccepted:
-		reqID := msg.Get(message.RequestID).(uint32)
-		containerIDs, err := getIDs(message.ContainerIDs, msg)
-		if err != nil {
-			h.ctx.Log.Debug("malformed message",
-				zap.Stringer("messageOp", op),
-				zap.Stringer("nodeID", nodeID),
-				zap.Uint32("requestID", reqID),
+				zap.Stringer("messageOp", message.GetAncestorsOp),
+				zap.Uint32("requestID", msg.RequestId),
+				zap.String("field", "ContainerID"),
 				zap.Error(err),
 			)
 			return nil
 		}
-		return engine.GetAccepted(nodeID, reqID, containerIDs)
 
-	case message.Accepted:
-		reqID := msg.Get(message.RequestID).(uint32)
-		containerIDs, err := getIDs(message.ContainerIDs, msg)
+		return engine.GetAncestors(ctx, nodeID, msg.RequestId, containerID)
+
+	case *message.GetAncestorsFailed:
+		return engine.GetAncestorsFailed(ctx, nodeID, msg.RequestID)
+
+	case *p2p.Ancestors:
+		return engine.Ancestors(ctx, nodeID, msg.RequestId, msg.Containers)
+
+	case *p2p.Get:
+		containerID, err := ids.ToID(msg.ContainerId)
 		if err != nil {
-			h.ctx.Log.Debug("malformed message",
-				zap.Stringer("messageOp", op),
+			h.ctx.Log.Debug("dropping message with invalid field",
 				zap.Stringer("nodeID", nodeID),
-				zap.Uint32("requestID", reqID),
+				zap.Stringer("messageOp", message.GetOp),
+				zap.Uint32("requestID", msg.RequestId),
+				zap.String("field", "ContainerID"),
 				zap.Error(err),
 			)
-			return engine.GetAcceptedFailed(nodeID, reqID)
+			return nil
 		}
-		return engine.Accepted(nodeID, reqID, containerIDs)
 
-	case message.GetAcceptedFailed:
-		reqID := msg.Get(message.RequestID).(uint32)
-		return engine.GetAcceptedFailed(nodeID, reqID)
+		return engine.Get(ctx, nodeID, msg.RequestId, containerID)
 
-	case message.GetAncestors:
-		reqID := msg.Get(message.RequestID).(uint32)
-		containerID, err := ids.ToID(msg.Get(message.ContainerID).([]byte))
-		h.ctx.Log.AssertNoError(err)
-		return engine.GetAncestors(nodeID, reqID, containerID)
+	case *message.GetFailed:
+		return engine.GetFailed(ctx, nodeID, msg.RequestID)
 
-	case message.GetAncestorsFailed:
-		reqID := msg.Get(message.RequestID).(uint32)
-		return engine.GetAncestorsFailed(nodeID, reqID)
+	case *p2p.Put:
+		return engine.Put(ctx, nodeID, msg.RequestId, msg.Container)
 
-	case message.Ancestors:
-		reqID := msg.Get(message.RequestID).(uint32)
-		containers := msg.Get(message.MultiContainerBytes).([][]byte)
-		return engine.Ancestors(nodeID, reqID, containers)
+	case *p2p.PushQuery:
+		return engine.PushQuery(ctx, nodeID, msg.RequestId, msg.Container, msg.RequestedHeight)
 
-	case message.Get:
-		reqID := msg.Get(message.RequestID).(uint32)
-		containerID, err := ids.ToID(msg.Get(message.ContainerID).([]byte))
-		h.ctx.Log.AssertNoError(err)
-		return engine.Get(nodeID, reqID, containerID)
-
-	case message.GetFailed:
-		reqID := msg.Get(message.RequestID).(uint32)
-		return engine.GetFailed(nodeID, reqID)
-
-	case message.Put:
-		reqID := msg.Get(message.RequestID).(uint32)
-		container := msg.Get(message.ContainerBytes).([]byte)
-		return engine.Put(nodeID, reqID, container)
-
-	case message.PushQuery:
-		reqID := msg.Get(message.RequestID).(uint32)
-		container := msg.Get(message.ContainerBytes).([]byte)
-		return engine.PushQuery(nodeID, reqID, container)
-
-	case message.PullQuery:
-		reqID := msg.Get(message.RequestID).(uint32)
-		containerID, err := ids.ToID(msg.Get(message.ContainerID).([]byte))
-		h.ctx.Log.AssertNoError(err)
-		return engine.PullQuery(nodeID, reqID, containerID)
-
-	case message.Chits:
-		reqID := msg.Get(message.RequestID).(uint32)
-		votes, err := getIDs(message.ContainerIDs, msg)
+	case *p2p.PullQuery:
+		containerID, err := ids.ToID(msg.ContainerId)
 		if err != nil {
-			h.ctx.Log.Debug("malformed message",
-				zap.Stringer("messageOp", op),
+			h.ctx.Log.Debug("dropping message with invalid field",
 				zap.Stringer("nodeID", nodeID),
-				zap.Uint32("requestID", reqID),
+				zap.Stringer("messageOp", message.PullQueryOp),
+				zap.Uint32("requestID", msg.RequestId),
+				zap.String("field", "ContainerID"),
 				zap.Error(err),
 			)
-			return engine.QueryFailed(nodeID, reqID)
+			return nil
 		}
-		return engine.Chits(nodeID, reqID, votes)
 
-	case message.ChitsV2:
-		reqID := msg.Get(message.RequestID).(uint32)
-		votes, err := getIDs(message.ContainerIDs, msg)
+		return engine.PullQuery(ctx, nodeID, msg.RequestId, containerID, msg.RequestedHeight)
+
+	case *p2p.Chits:
+		preferredID, err := ids.ToID(msg.PreferredId)
 		if err != nil {
-			h.ctx.Log.Debug("malformed message",
-				zap.Stringer("messageOp", op),
+			h.ctx.Log.Debug("message with invalid field",
 				zap.Stringer("nodeID", nodeID),
-				zap.Uint32("requestID", reqID),
+				zap.Stringer("messageOp", message.ChitsOp),
+				zap.Uint32("requestID", msg.RequestId),
+				zap.String("field", "PreferredID"),
 				zap.Error(err),
 			)
-			return engine.QueryFailed(nodeID, reqID)
+			return engine.QueryFailed(ctx, nodeID, msg.RequestId)
 		}
-		vote, err := ids.ToID(msg.Get(message.ContainerID).([]byte))
-		h.ctx.Log.AssertNoError(err)
-		return engine.ChitsV2(nodeID, reqID, votes, vote)
 
-	case message.QueryFailed:
-		reqID := msg.Get(message.RequestID).(uint32)
-		return engine.QueryFailed(nodeID, reqID)
+		preferredIDAtHeight, err := ids.ToID(msg.PreferredIdAtHeight)
+		if err != nil {
+			h.ctx.Log.Debug("message with invalid field",
+				zap.Stringer("nodeID", nodeID),
+				zap.Stringer("messageOp", message.ChitsOp),
+				zap.Uint32("requestID", msg.RequestId),
+				zap.String("field", "PreferredIDAtHeight"),
+				zap.Error(err),
+			)
+			// TODO: Require this field to be populated correctly after v1.11.x
+			// is activated.
+			preferredIDAtHeight = preferredID
+		}
 
-	case message.Connected:
-		peerVersion := msg.Get(message.VersionStruct).(*version.Application)
-		return engine.Connected(nodeID, peerVersion)
+		acceptedID, err := ids.ToID(msg.AcceptedId)
+		if err != nil {
+			h.ctx.Log.Debug("message with invalid field",
+				zap.Stringer("nodeID", nodeID),
+				zap.Stringer("messageOp", message.ChitsOp),
+				zap.Uint32("requestID", msg.RequestId),
+				zap.String("field", "AcceptedID"),
+				zap.Error(err),
+			)
+			return engine.QueryFailed(ctx, nodeID, msg.RequestId)
+		}
 
-	case message.Disconnected:
-		return engine.Disconnected(nodeID)
+		return engine.Chits(ctx, nodeID, msg.RequestId, preferredID, preferredIDAtHeight, acceptedID)
+
+	case *message.QueryFailed:
+		return engine.QueryFailed(ctx, nodeID, msg.RequestID)
+
+	// Connection messages can be sent to the currently executing engine
+	case *message.Connected:
+		err := h.peerTracker.Connected(ctx, nodeID, msg.NodeVersion)
+		if err != nil {
+			return err
+		}
+		return engine.Connected(ctx, nodeID, msg.NodeVersion)
+
+	case *message.ConnectedSubnet:
+		return h.subnetConnector.ConnectedSubnet(ctx, nodeID, msg.SubnetID)
+
+	case *message.Disconnected:
+		err := h.peerTracker.Disconnected(ctx, nodeID)
+		if err != nil {
+			return err
+		}
+		return engine.Disconnected(ctx, nodeID)
 
 	default:
 		return fmt.Errorf(
@@ -588,65 +768,109 @@ func (h *handler) handleSyncMsg(msg message.InboundMessage) error {
 	}
 }
 
-func (h *handler) handleAsyncMsg(msg message.InboundMessage) {
-	h.asyncMessagePool.Send(func() {
-		if err := h.executeAsyncMsg(msg); err != nil {
-			h.StopWithError(fmt.Errorf(
+func (h *handler) handleAsyncMsg(ctx context.Context, msg Message) {
+	h.asyncMessagePool.Go(func() error {
+		if err := h.executeAsyncMsg(ctx, msg); err != nil {
+			h.StopWithError(ctx, fmt.Errorf(
 				"%w while processing async message: %s",
 				err,
 				msg,
 			))
 		}
+		return nil
 	})
 }
 
-func (h *handler) executeAsyncMsg(msg message.InboundMessage) error {
-	h.ctx.Log.Debug("forwarding async message to consensus",
-		zap.Stringer("message", msg),
-	)
-
+// Any returned error is treated as fatal
+func (h *handler) executeAsyncMsg(ctx context.Context, msg Message) error {
 	var (
 		nodeID    = msg.NodeID()
 		op        = msg.Op()
+		body      = msg.Message()
 		startTime = h.clock.Time()
 	)
+	if h.ctx.Log.Enabled(logging.Verbo) {
+		h.ctx.Log.Verbo("forwarding async message to consensus",
+			zap.Stringer("nodeID", nodeID),
+			zap.Stringer("messageOp", op),
+			zap.Stringer("message", body),
+		)
+	} else {
+		h.ctx.Log.Debug("forwarding async message to consensus",
+			zap.Stringer("nodeID", nodeID),
+			zap.Stringer("messageOp", op),
+		)
+	}
 	h.resourceTracker.StartProcessing(nodeID, startTime)
 	defer func() {
 		var (
-			endTime   = h.clock.Time()
-			histogram = h.metrics.messages[op]
+			endTime           = h.clock.Time()
+			messageHistograms = h.metrics.messages[op]
+			processingTime    = endTime.Sub(startTime)
 		)
 		h.resourceTracker.StopProcessing(nodeID, endTime)
-		histogram.Observe(float64(endTime.Sub(startTime)))
+		// There is no lock grabbed here, so both metrics are identical
+		messageHistograms.processingTime.Observe(float64(processingTime))
+		messageHistograms.msgHandlingTime.Observe(float64(processingTime))
 		msg.OnFinishedHandling()
 		h.ctx.Log.Debug("finished handling async message",
 			zap.Stringer("messageOp", op),
 		)
 	}()
 
-	engine, err := h.getEngine()
-	if err != nil {
-		return err
+	state := h.ctx.State.Get()
+	engine, ok := h.engineManager.Get(state.Type).Get(state.State)
+	if !ok {
+		return fmt.Errorf(
+			"%w %s running %s",
+			errMissingEngine,
+			state.State,
+			state.Type,
+		)
 	}
 
-	switch op {
-	case message.AppRequest:
-		reqID := msg.Get(message.RequestID).(uint32)
-		appBytes := msg.Get(message.AppBytes).([]byte)
-		return engine.AppRequest(nodeID, reqID, msg.ExpirationTime(), appBytes)
+	switch m := body.(type) {
+	case *p2p.AppRequest:
+		return engine.AppRequest(
+			ctx,
+			nodeID,
+			m.RequestId,
+			msg.Expiration(),
+			m.AppBytes,
+		)
 
-	case message.AppResponse:
-		reqID := msg.Get(message.RequestID).(uint32)
-		appBytes := msg.Get(message.AppBytes).([]byte)
-		return engine.AppResponse(nodeID, reqID, appBytes)
+	case *p2p.AppResponse:
+		return engine.AppResponse(ctx, nodeID, m.RequestId, m.AppBytes)
 
-	case message.AppRequestFailed:
-		reqID := msg.Get(message.RequestID).(uint32)
-		return engine.AppRequestFailed(nodeID, reqID)
+	case *message.AppRequestFailed:
+		return engine.AppRequestFailed(ctx, nodeID, m.RequestID)
 
-	case message.AppGossip:
-		appBytes := msg.Get(message.AppBytes).([]byte)
-		return engine.AppGossip(nodeID, appBytes)
+	case *p2p.AppGossip:
+		return engine.AppGossip(ctx, nodeID, m.AppBytes)
+
+	case *message.CrossChainAppRequest:
+		return engine.CrossChainAppRequest(
+			ctx,
+			m.SourceChainID,
+			m.RequestID,
+			msg.Expiration(),
+			m.Message,
+		)
+
+	case *message.CrossChainAppResponse:
+		return engine.CrossChainAppResponse(
+			ctx,
+			m.SourceChainID,
+			m.RequestID,
+			m.Message,
+		)
+
+	case *message.CrossChainAppRequestFailed:
+		return engine.CrossChainAppRequestFailed(
+			ctx,
+			m.SourceChainID,
+			m.RequestID,
+		)
 
 	default:
 		return fmt.Errorf(
@@ -656,45 +880,73 @@ func (h *handler) executeAsyncMsg(msg message.InboundMessage) error {
 	}
 }
 
+// Any returned error is treated as fatal
 func (h *handler) handleChanMsg(msg message.InboundMessage) error {
-	h.ctx.Log.Debug("forwarding chan message to consensus",
-		zap.Stringer("message", msg),
-	)
-
 	var (
 		op        = msg.Op()
+		body      = msg.Message()
 		startTime = h.clock.Time()
+		// Check if the chain is in normal operation at the start of message
+		// execution (may change during execution)
+		isNormalOp = h.ctx.State.Get().State == snow.NormalOp
 	)
+	if h.ctx.Log.Enabled(logging.Verbo) {
+		h.ctx.Log.Verbo("forwarding chan message to consensus",
+			zap.Stringer("messageOp", op),
+			zap.Stringer("message", body),
+		)
+	} else {
+		h.ctx.Log.Debug("forwarding chan message to consensus",
+			zap.Stringer("messageOp", op),
+		)
+	}
 	h.ctx.Lock.Lock()
+	lockAcquiredTime := h.clock.Time()
 	defer func() {
 		h.ctx.Lock.Unlock()
 
 		var (
-			endTime   = h.clock.Time()
-			histogram = h.metrics.messages[op]
+			endTime           = h.clock.Time()
+			messageHistograms = h.metrics.messages[op]
+			processingTime    = endTime.Sub(startTime)
+			msgHandlingTime   = endTime.Sub(lockAcquiredTime)
 		)
-		histogram.Observe(float64(endTime.Sub(startTime)))
+		messageHistograms.processingTime.Observe(float64(processingTime))
+		messageHistograms.msgHandlingTime.Observe(float64(msgHandlingTime))
 		msg.OnFinishedHandling()
 		h.ctx.Log.Debug("finished handling chan message",
 			zap.Stringer("messageOp", op),
 		)
+		if processingTime > syncProcessingTimeWarnLimit && isNormalOp {
+			h.ctx.Log.Warn("handling chan message took longer than expected",
+				zap.Duration("processingTime", processingTime),
+				zap.Duration("msgHandlingTime", msgHandlingTime),
+				zap.Stringer("messageOp", op),
+				zap.Stringer("message", body),
+			)
+		}
 	}()
 
-	engine, err := h.getEngine()
-	if err != nil {
-		return err
+	state := h.ctx.State.Get()
+	engine, ok := h.engineManager.Get(state.Type).Get(state.State)
+	if !ok {
+		return fmt.Errorf(
+			"%w %s running %s",
+			errMissingEngine,
+			state.State,
+			state.Type,
+		)
 	}
 
-	switch op := msg.Op(); op {
-	case message.Notify:
-		vmMsg := msg.Get(message.VMMessage).(uint32)
-		return engine.Notify(common.Message(vmMsg))
+	switch msg := body.(type) {
+	case *message.VMMessage:
+		return engine.Notify(context.TODO(), common.Message(msg.Notification))
 
-	case message.GossipRequest:
-		return engine.Gossip()
+	case *message.GossipRequest:
+		return engine.Gossip(context.TODO())
 
-	case message.Timeout:
-		return engine.Timeout()
+	case *message.Timeout:
+		return engine.Timeout(context.TODO())
 
 	default:
 		return fmt.Errorf(
@@ -704,74 +956,70 @@ func (h *handler) handleChanMsg(msg message.InboundMessage) error {
 	}
 }
 
-func (h *handler) getEngine() (common.Engine, error) {
-	state := h.ctx.GetState()
-	switch state {
-	case snow.StateSyncing:
-		return h.stateSyncer, nil
-	case snow.Bootstrapping:
-		return h.bootstrapper, nil
-	case snow.NormalOp:
-		return h.engine, nil
-	default:
-		return nil, fmt.Errorf("unknown handler for state %s", state)
-	}
-}
-
-func (h *handler) popUnexpiredMsg(queue MessageQueue, expired prometheus.Counter) (message.InboundMessage, bool) {
+func (h *handler) popUnexpiredMsg(
+	queue MessageQueue,
+	expired prometheus.Counter,
+) (context.Context, Message, bool) {
 	for {
 		// Get the next message we should process. If the handler is shutting
 		// down, we may fail to pop a message.
-		msg, ok := queue.Pop()
+		ctx, msg, ok := queue.Pop()
 		if !ok {
-			return nil, false
+			return nil, Message{}, false
 		}
 
 		// If this message's deadline has passed, don't process it.
-		if expirationTime := msg.ExpirationTime(); !expirationTime.IsZero() && h.clock.Time().After(expirationTime) {
-			h.ctx.Log.Verbo("dropping message",
+		if expiration := msg.Expiration(); h.clock.Time().After(expiration) {
+			h.ctx.Log.Debug("dropping message",
 				zap.String("reason", "timeout"),
 				zap.Stringer("nodeID", msg.NodeID()),
-				zap.Stringer("message", msg),
+				zap.Stringer("messageOp", msg.Op()),
 			)
+			span := trace.SpanFromContext(ctx)
+			span.AddEvent("dropping message", trace.WithAttributes(
+				attribute.String("reason", "timeout"),
+			))
 			expired.Inc()
 			msg.OnFinishedHandling()
 			continue
 		}
 
-		return msg, true
+		return ctx, msg, true
 	}
 }
 
-func (h *handler) closeDispatcher() {
-	h.ctx.Lock.Lock()
-	defer h.ctx.Lock.Unlock()
-
-	h.numDispatchersClosed++
-	if h.numDispatchersClosed < numDispatchersToClose {
+// Invariant: if closeDispatcher is called, Stop has already been called.
+func (h *handler) closeDispatcher(ctx context.Context) {
+	if h.numDispatchersClosed.Add(1) < numDispatchersToClose {
 		return
 	}
 
-	h.shutdown()
+	h.shutdown(ctx, h.startClosingTime)
 }
 
-func (h *handler) shutdown() {
+// Note: shutdown is only called after all message dispatchers have exited or if
+// no message dispatchers ever started.
+func (h *handler) shutdown(ctx context.Context, startClosingTime time.Time) {
 	defer func() {
 		if h.onStopped != nil {
 			go h.onStopped()
 		}
+
+		h.totalClosingTime = h.clock.Time().Sub(startClosingTime)
 		close(h.closed)
 	}()
 
-	currentEngine, err := h.getEngine()
-	if err != nil {
+	state := h.ctx.State.Get()
+	engine, ok := h.engineManager.Get(state.Type).Get(state.State)
+	if !ok {
 		h.ctx.Log.Error("failed fetching current engine during shutdown",
-			zap.Error(err),
+			zap.Stringer("type", state.Type),
+			zap.Stringer("state", state.State),
 		)
 		return
 	}
 
-	if err := currentEngine.Shutdown(); err != nil {
+	if err := engine.Shutdown(ctx); err != nil {
 		h.ctx.Log.Error("failed while shutting down the chain",
 			zap.Error(err),
 		)

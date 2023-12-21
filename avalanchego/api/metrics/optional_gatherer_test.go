@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package metrics
@@ -11,6 +11,8 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 )
+
+var errTest = errors.New("non-nil error")
 
 func TestOptionalGathererEmptyGather(t *testing.T) {
 	require := require.New(t)
@@ -28,11 +30,9 @@ func TestOptionalGathererDuplicated(t *testing.T) {
 	g := NewOptionalGatherer()
 	og := NewOptionalGatherer()
 
+	require.NoError(g.Register(og))
 	err := g.Register(og)
-	require.NoError(err)
-
-	err = g.Register(og)
-	require.Equal(errDuplicatedRegister, err)
+	require.ErrorIs(err, errReregisterGatherer)
 }
 
 func TestOptionalGathererAddedError(t *testing.T) {
@@ -40,16 +40,14 @@ func TestOptionalGathererAddedError(t *testing.T) {
 
 	g := NewOptionalGatherer()
 
-	expected := errors.New(":(")
 	tg := &testGatherer{
-		err: expected,
+		err: errTest,
 	}
 
-	err := g.Register(tg)
-	require.NoError(err)
+	require.NoError(g.Register(tg))
 
 	mfs, err := g.Gather()
-	require.Equal(expected, err)
+	require.ErrorIs(err, errTest)
 	require.Empty(mfs)
 }
 
@@ -64,8 +62,7 @@ func TestMultiGathererAdded(t *testing.T) {
 		}},
 	}
 
-	err := g.Register(tg)
-	require.NoError(err)
+	require.NoError(g.Register(tg))
 
 	mfs, err := g.Gather()
 	require.NoError(err)

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package network
@@ -7,6 +7,8 @@ import (
 	"crypto/tls"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/network/peer"
@@ -25,15 +27,15 @@ func getTLS(t *testing.T, index int) (ids.NodeID, *tls.Certificate, *tls.Config)
 
 	for len(tlsCerts) <= index {
 		cert, err := staking.NewTLSCert()
-		if err != nil {
-			t.Fatal(err)
-		}
-		tlsConfig := peer.TLSConfig(*cert)
+		require.NoError(t, err)
+		tlsConfig := peer.TLSConfig(*cert, nil)
 
 		tlsCerts = append(tlsCerts, cert)
 		tlsConfigs = append(tlsConfigs, tlsConfig)
 	}
 
-	cert := tlsCerts[index]
-	return ids.NodeIDFromCert(cert.Leaf), cert, tlsConfigs[index]
+	tlsCert := tlsCerts[index]
+	cert := staking.CertificateFromX509(tlsCert.Leaf)
+	nodeID := ids.NodeIDFromCert(cert)
+	return nodeID, tlsCert, tlsConfigs[index]
 }

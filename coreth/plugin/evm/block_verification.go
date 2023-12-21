@@ -4,6 +4,7 @@
 package evm
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -98,7 +99,14 @@ func (v blockValidator) SyntacticVerify(b *Block, rules params.Rules) error {
 	}
 
 	// Enforce static gas limit after ApricotPhase1 (prior to ApricotPhase1 it's handled in processing).
-	if rules.IsApricotPhase1 {
+	if rules.IsCortina {
+		if ethHeader.GasLimit != params.CortinaGasLimit {
+			return fmt.Errorf(
+				"expected gas limit to be %d after cortina but got %d",
+				params.CortinaGasLimit, ethHeader.GasLimit,
+			)
+		}
+	} else if rules.IsApricotPhase1 {
 		if ethHeader.GasLimit != params.ApricotPhase1GasLimit {
 			return fmt.Errorf(
 				"expected gas limit to be %d after apricot phase 1 but got %d",
@@ -110,11 +118,18 @@ func (v blockValidator) SyntacticVerify(b *Block, rules params.Rules) error {
 	// Check that the size of the header's Extra data field is correct for [rules].
 	headerExtraDataSize := uint64(len(ethHeader.Extra))
 	switch {
+	case rules.IsDUpgrade:
+		if headerExtraDataSize < uint64(params.DynamicFeeExtraDataSize) {
+			return fmt.Errorf(
+				"expected header ExtraData to be len >= %d but got %d",
+				params.DynamicFeeExtraDataSize, len(ethHeader.Extra),
+			)
+		}
 	case rules.IsApricotPhase3:
-		if headerExtraDataSize != params.ApricotPhase3ExtraDataSize {
+		if headerExtraDataSize != params.DynamicFeeExtraDataSize {
 			return fmt.Errorf(
 				"expected header ExtraData to be %d but got %d",
-				params.ApricotPhase3ExtraDataSize, headerExtraDataSize,
+				params.DynamicFeeExtraDataSize, headerExtraDataSize,
 			)
 		}
 	case rules.IsApricotPhase1:
@@ -138,7 +153,7 @@ func (v blockValidator) SyntacticVerify(b *Block, rules params.Rules) error {
 	}
 
 	// Check that the tx hash in the header matches the body
-	txsHash := types.DeriveSha(b.ethBlock.Transactions(), new(trie.Trie))
+	txsHash := types.DeriveSha(b.ethBlock.Transactions(), trie.NewStackTrie(nil))
 	if txsHash != ethHeader.TxHash {
 		return fmt.Errorf("invalid txs hash %v does not match calculated txs hash %v", ethHeader.TxHash, txsHash)
 	}
@@ -239,6 +254,14 @@ func (v blockValidator) SyntacticVerify(b *Block, rules params.Rules) error {
 		case !ethHeader.BlockGasCost.IsUint64():
 			return fmt.Errorf("too large blockGasCost: %d", ethHeader.BlockGasCost)
 		}
+	}
+
+	// Verify the existence / non-existence of excessDataGas
+	if rules.IsCancun && ethHeader.ExcessDataGas == nil {
+		return errors.New("missing excessDataGas")
+	}
+	if !rules.IsCancun && ethHeader.ExcessDataGas != nil {
+		return fmt.Errorf("invalid excessDataGas: have %d, expected nil", ethHeader.ExcessDataGas)
 	}
 
 	return nil

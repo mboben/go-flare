@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package p
@@ -11,23 +11,17 @@ import (
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/constants"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/platformvm/txs"
+	"github.com/ava-labs/avalanchego/wallet/subnet/primary/common"
 )
 
-var _ Backend = &backend{}
-
-type ChainUTXOs interface {
-	AddUTXO(ctx stdcontext.Context, destinationChainID ids.ID, utxo *avax.UTXO) error
-	RemoveUTXO(ctx stdcontext.Context, sourceChainID, utxoID ids.ID) error
-
-	UTXOs(ctx stdcontext.Context, sourceChainID ids.ID) ([]*avax.UTXO, error)
-	GetUTXO(ctx stdcontext.Context, sourceChainID, utxoID ids.ID) (*avax.UTXO, error)
-}
+var _ Backend = (*backend)(nil)
 
 // Backend defines the full interface required to support a P-chain wallet.
 type Backend interface {
-	ChainUTXOs
+	common.ChainUTXOs
 	BuilderBackend
 	SignerBackend
 
@@ -36,14 +30,14 @@ type Backend interface {
 
 type backend struct {
 	Context
-	ChainUTXOs
+	common.ChainUTXOs
 
 	txsLock sync.RWMutex
 	// txID -> tx
 	txs map[ids.ID]*txs.Tx
 }
 
-func NewBackend(ctx Context, utxos ChainUTXOs, txs map[ids.ID]*txs.Tx) Backend {
+func NewBackend(ctx Context, utxos common.ChainUTXOs, txs map[ids.ID]*txs.Tx) Backend {
 	return &backend{
 		Context:    ctx,
 		ChainUTXOs: utxos,
@@ -84,7 +78,7 @@ func (b *backend) addUTXOs(ctx stdcontext.Context, destinationChainID ids.ID, ut
 	return nil
 }
 
-func (b *backend) removeUTXOs(ctx stdcontext.Context, sourceChain ids.ID, utxoIDs ids.Set) error {
+func (b *backend) removeUTXOs(ctx stdcontext.Context, sourceChain ids.ID, utxoIDs set.Set[ids.ID]) error {
 	for utxoID := range utxoIDs {
 		if err := b.RemoveUTXO(ctx, sourceChain, utxoID); err != nil {
 			return err

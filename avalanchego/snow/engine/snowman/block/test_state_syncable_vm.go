@@ -1,15 +1,18 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package block
 
 import (
+	"context"
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 var (
-	_ StateSyncableVM = &TestStateSyncableVM{}
+	_ StateSyncableVM = (*TestStateSyncableVM)(nil)
 
 	errStateSyncEnabled           = errors.New("unexpectedly called StateSyncEnabled")
 	errStateSyncGetOngoingSummary = errors.New("unexpectedly called StateSyncGetOngoingSummary")
@@ -27,59 +30,59 @@ type TestStateSyncableVM struct {
 	CantParseStateSummary,
 	CantGetStateSummary bool
 
-	StateSyncEnabledF           func() (bool, error)
-	GetOngoingSyncStateSummaryF func() (StateSummary, error)
-	GetLastStateSummaryF        func() (StateSummary, error)
-	ParseStateSummaryF          func(summaryBytes []byte) (StateSummary, error)
-	GetStateSummaryF            func(uint64) (StateSummary, error)
+	StateSyncEnabledF           func(context.Context) (bool, error)
+	GetOngoingSyncStateSummaryF func(context.Context) (StateSummary, error)
+	GetLastStateSummaryF        func(context.Context) (StateSummary, error)
+	ParseStateSummaryF          func(ctx context.Context, summaryBytes []byte) (StateSummary, error)
+	GetStateSummaryF            func(ctx context.Context, summaryHeight uint64) (StateSummary, error)
 }
 
-func (vm *TestStateSyncableVM) StateSyncEnabled() (bool, error) {
+func (vm *TestStateSyncableVM) StateSyncEnabled(ctx context.Context) (bool, error) {
 	if vm.StateSyncEnabledF != nil {
-		return vm.StateSyncEnabledF()
+		return vm.StateSyncEnabledF(ctx)
 	}
 	if vm.CantStateSyncEnabled && vm.T != nil {
-		vm.T.Fatal(errStateSyncEnabled)
+		require.FailNow(vm.T, errStateSyncEnabled.Error())
 	}
 	return false, errStateSyncEnabled
 }
 
-func (vm *TestStateSyncableVM) GetOngoingSyncStateSummary() (StateSummary, error) {
+func (vm *TestStateSyncableVM) GetOngoingSyncStateSummary(ctx context.Context) (StateSummary, error) {
 	if vm.GetOngoingSyncStateSummaryF != nil {
-		return vm.GetOngoingSyncStateSummaryF()
+		return vm.GetOngoingSyncStateSummaryF(ctx)
 	}
 	if vm.CantStateSyncGetOngoingSummary && vm.T != nil {
-		vm.T.Fatal(errStateSyncGetOngoingSummary)
+		require.FailNow(vm.T, errStateSyncGetOngoingSummary.Error())
 	}
 	return nil, errStateSyncGetOngoingSummary
 }
 
-func (vm *TestStateSyncableVM) GetLastStateSummary() (StateSummary, error) {
+func (vm *TestStateSyncableVM) GetLastStateSummary(ctx context.Context) (StateSummary, error) {
 	if vm.GetLastStateSummaryF != nil {
-		return vm.GetLastStateSummaryF()
+		return vm.GetLastStateSummaryF(ctx)
 	}
 	if vm.CantGetLastStateSummary && vm.T != nil {
-		vm.T.Fatal(errGetLastStateSummary)
+		require.FailNow(vm.T, errGetLastStateSummary.Error())
 	}
 	return nil, errGetLastStateSummary
 }
 
-func (vm *TestStateSyncableVM) ParseStateSummary(summaryBytes []byte) (StateSummary, error) {
+func (vm *TestStateSyncableVM) ParseStateSummary(ctx context.Context, summaryBytes []byte) (StateSummary, error) {
 	if vm.ParseStateSummaryF != nil {
-		return vm.ParseStateSummaryF(summaryBytes)
+		return vm.ParseStateSummaryF(ctx, summaryBytes)
 	}
 	if vm.CantParseStateSummary && vm.T != nil {
-		vm.T.Fatal(errParseStateSummary)
+		require.FailNow(vm.T, errParseStateSummary.Error())
 	}
 	return nil, errParseStateSummary
 }
 
-func (vm *TestStateSyncableVM) GetStateSummary(key uint64) (StateSummary, error) {
+func (vm *TestStateSyncableVM) GetStateSummary(ctx context.Context, summaryHeight uint64) (StateSummary, error) {
 	if vm.GetStateSummaryF != nil {
-		return vm.GetStateSummaryF(key)
+		return vm.GetStateSummaryF(ctx, summaryHeight)
 	}
 	if vm.CantGetStateSummary && vm.T != nil {
-		vm.T.Fatal(errGetStateSummary)
+		require.FailNow(vm.T, errGetStateSummary.Error())
 	}
 	return nil, errGetStateSummary
 }

@@ -1,17 +1,20 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package block
 
 import (
+	"context"
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/ids"
 )
 
 var (
-	_ StateSummary = &TestStateSummary{}
+	_ StateSummary = (*TestStateSummary)(nil)
 
 	errAccept = errors.New("unexpectedly called Accept")
 )
@@ -23,19 +26,27 @@ type TestStateSummary struct {
 
 	T          *testing.T
 	CantAccept bool
-	AcceptF    func() (bool, error)
+	AcceptF    func(context.Context) (StateSyncMode, error)
 }
 
-func (s *TestStateSummary) ID() ids.ID     { return s.IDV }
-func (s *TestStateSummary) Height() uint64 { return s.HeightV }
-func (s *TestStateSummary) Bytes() []byte  { return s.BytesV }
+func (s *TestStateSummary) ID() ids.ID {
+	return s.IDV
+}
 
-func (s *TestStateSummary) Accept() (bool, error) {
+func (s *TestStateSummary) Height() uint64 {
+	return s.HeightV
+}
+
+func (s *TestStateSummary) Bytes() []byte {
+	return s.BytesV
+}
+
+func (s *TestStateSummary) Accept(ctx context.Context) (StateSyncMode, error) {
 	if s.AcceptF != nil {
-		return s.AcceptF()
+		return s.AcceptF(ctx)
 	}
 	if s.CantAccept && s.T != nil {
-		s.T.Fatal(errAccept)
+		require.FailNow(s.T, errAccept.Error())
 	}
-	return false, errAccept
+	return StateSyncSkipped, errAccept
 }

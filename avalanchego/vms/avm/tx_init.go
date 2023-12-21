@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
@@ -11,7 +11,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/avm/txs"
 )
 
-var _ txs.Visitor = &txInit{}
+var _ txs.Visitor = (*txInit)(nil)
 
 // Init initializes FxID where required
 type txInit struct {
@@ -44,7 +44,7 @@ func (t *txInit) init() error {
 	t.tx.Unsigned.InitCtx(t.ctx)
 
 	for _, cred := range t.tx.Creds {
-		fx, err := t.getParsedFx(cred.Verifiable)
+		fx, err := t.getParsedFx(cred.Credential)
 		if err != nil {
 			return err
 		}

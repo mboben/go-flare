@@ -1,14 +1,18 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/components/keystore"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
@@ -16,46 +20,42 @@ import (
 
 func BenchmarkLoadUser(b *testing.B) {
 	runLoadUserBenchmark := func(b *testing.B, numKeys int) {
-		// This will segfault instead of failing gracefully if there's an error
-		_, _, vm, _ := GenesisVM(nil)
-		ctx := vm.ctx
+		require := require.New(b)
+
+		env := setup(b, &envConfig{
+			keystoreUsers: []*user{{
+				username: username,
+				password: password,
+			}},
+		})
 		defer func() {
-			if err := vm.Shutdown(); err != nil {
-				b.Fatal(err)
-			}
-			ctx.Lock.Unlock()
+			require.NoError(env.vm.Shutdown(context.Background()))
+			env.vm.ctx.Lock.Unlock()
 		}()
 
-		user, err := keystore.NewUserFromKeystore(vm.ctx.Keystore, username, password)
-		if err != nil {
-			b.Fatalf("Failed to get user keystore db: %s", err)
-		}
+		user, err := keystore.NewUserFromKeystore(env.vm.ctx.Keystore, username, password)
+		require.NoError(err)
 
 		keys, err := keystore.NewKeys(user, numKeys)
-		if err != nil {
-			b.Fatalf("problem generating private key: %s", err)
-		}
+		require.NoError(err)
 
 		b.ResetTimer()
 
-		fromAddrs := ids.ShortSet{}
+		fromAddrs := set.Set[ids.ShortID]{}
 		for n := 0; n < b.N; n++ {
 			addrIndex := n % numKeys
 			fromAddrs.Clear()
 			fromAddrs.Add(keys[addrIndex].PublicKey().Address())
-			if _, _, err := vm.LoadUser(username, password, fromAddrs); err != nil {
-				b.Fatalf("Failed to load user: %s", err)
-			}
+			_, _, err := env.vm.LoadUser(username, password, fromAddrs)
+			require.NoError(err)
 		}
 
 		b.StopTimer()
 
-		if err := user.Close(); err != nil {
-			b.Fatal(err)
-		}
+		require.NoError(user.Close())
 	}
 
-	benchmarkSize := []int{10, 100, 1000, 10000}
+	benchmarkSize := []int{10, 100, 1000, 5000}
 	for _, numKeys := range benchmarkSize {
 		b.Run(fmt.Sprintf("NumKeys=%d", numKeys), func(b *testing.B) {
 			runLoadUserBenchmark(b, numKeys)
@@ -65,13 +65,12 @@ func BenchmarkLoadUser(b *testing.B) {
 
 // GetAllUTXOsBenchmark is a helper func to benchmark the GetAllUTXOs depending on the size
 func GetAllUTXOsBenchmark(b *testing.B, utxoCount int) {
-	_, _, vm, _ := GenesisVM(b)
-	ctx := vm.ctx
+	require := require.New(b)
+
+	env := setup(b, &envConfig{})
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
-			b.Fatal(err)
-		}
-		ctx.Lock.Unlock()
+		require.NoError(env.vm.Shutdown(context.Background()))
+		env.vm.ctx.Lock.Unlock()
 	}()
 
 	addr := ids.GenerateTestShortID()
@@ -94,31 +93,19 @@ func GetAllUTXOsBenchmark(b *testing.B, utxoCount int) {
 			},
 		}
 
-		if err := vm.state.PutUTXO(utxo); err != nil {
-			b.Fatal(err)
-		}
+		env.vm.state.AddUTXO(utxo)
 	}
+	require.NoError(env.vm.state.Commit())
 
-	addrsSet := ids.ShortSet{}
-	addrsSet.Add(addr)
-
-	var (
-		err               error
-		notPaginatedUTXOs []*avax.UTXO
-	)
+	addrsSet := set.Of(addr)
 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
 		// Fetch all UTXOs older version
-		notPaginatedUTXOs, err = avax.GetAllUTXOs(vm.state, addrsSet)
-		if err != nil {
-			b.Fatal(err)
-		}
-
-		if len(notPaginatedUTXOs) != utxoCount {
-			b.Fatalf("Wrong number of utxos. Expected (%d) returned (%d)", utxoCount, len(notPaginatedUTXOs))
-		}
+		notPaginatedUTXOs, err := avax.GetAllUTXOs(env.vm.state, addrsSet)
+		require.NoError(err)
+		require.Len(notPaginatedUTXOs, utxoCount)
 	}
 }
 
@@ -127,9 +114,18 @@ func BenchmarkGetUTXOs(b *testing.B) {
 		name      string
 		utxoCount int
 	}{
-		{"100", 100},
-		{"10k", 10000},
-		{"100k", 100000},
+		{
+			name:      "100",
+			utxoCount: 100,
+		},
+		{
+			name:      "10k",
+			utxoCount: 10_000,
+		},
+		{
+			name:      "100k",
+			utxoCount: 100_000,
+		},
 	}
 
 	for _, count := range tests {

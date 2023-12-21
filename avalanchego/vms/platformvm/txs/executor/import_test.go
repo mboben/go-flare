@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package executor
@@ -13,37 +13,31 @@ import (
 	"github.com/ava-labs/avalanchego/chains/atomic"
 	"github.com/ava-labs/avalanchego/database/prefixdb"
 	"github.com/ava-labs/avalanchego/ids"
-	"github.com/ava-labs/avalanchego/utils/crypto"
+	"github.com/ava-labs/avalanchego/utils/crypto/secp256k1"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/platformvm/state"
 	"github.com/ava-labs/avalanchego/vms/platformvm/txs"
+	"github.com/ava-labs/avalanchego/vms/platformvm/utxo"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
 )
 
 func TestNewImportTx(t *testing.T) {
-	env := newEnvironment()
+	env := newEnvironment(t, false /*=postBanff*/, false /*=postCortina*/)
 	defer func() {
-		if err := shutdownEnvironment(env); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, shutdownEnvironment(env))
 	}()
 
 	type test struct {
 		description   string
 		sourceChainID ids.ID
 		sharedMemory  atomic.SharedMemory
-		sourceKeys    []*crypto.PrivateKeySECP256K1R
+		sourceKeys    []*secp256k1.PrivateKey
 		timestamp     time.Time
-		shouldErr     bool
-		shouldVerify  bool
+		expectedErr   error
 	}
 
-	factory := crypto.FactorySECP256K1R{}
-	sourceKeyIntf, err := factory.NewPrivateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sourceKey := sourceKeyIntf.(*crypto.PrivateKeySECP256K1R)
+	sourceKey, err := secp256k1.NewPrivateKey()
+	require.NoError(t, err)
 
 	cnt := new(byte)
 
@@ -74,19 +68,22 @@ func TestNewImportTx(t *testing.T) {
 				},
 			}
 			utxoBytes, err := txs.Codec.Marshal(txs.Version, utxo)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
+
 			inputID := utxo.InputID()
-			if err := peerSharedMemory.Apply(map[ids.ID]*atomic.Requests{env.ctx.ChainID: {PutRequests: []*atomic.Element{{
-				Key:   inputID[:],
-				Value: utxoBytes,
-				Traits: [][]byte{
-					sourceKey.PublicKey().Address().Bytes(),
+			require.NoError(t, peerSharedMemory.Apply(map[ids.ID]*atomic.Requests{
+				env.ctx.ChainID: {
+					PutRequests: []*atomic.Element{
+						{
+							Key:   inputID[:],
+							Value: utxoBytes,
+							Traits: [][]byte{
+								sourceKey.PublicKey().Address().Bytes(),
+							},
+						},
+					},
 				},
-			}}}}); err != nil {
-				t.Fatal(err)
-			}
+			}))
 		}
 
 		return sm
@@ -104,8 +101,8 @@ func TestNewImportTx(t *testing.T) {
 					env.ctx.AVAXAssetID: env.config.TxFee - 1,
 				},
 			),
-			sourceKeys: []*crypto.PrivateKeySECP256K1R{sourceKey},
-			shouldErr:  true,
+			sourceKeys:  []*secp256k1.PrivateKey{sourceKey},
+			expectedErr: utxo.ErrInsufficientFunds,
 		},
 		{
 			description:   "can barely pay fee",
@@ -116,9 +113,8 @@ func TestNewImportTx(t *testing.T) {
 					env.ctx.AVAXAssetID: env.config.TxFee,
 				},
 			),
-			sourceKeys:   []*crypto.PrivateKeySECP256K1R{sourceKey},
-			shouldErr:    false,
-			shouldVerify: true,
+			sourceKeys:  []*secp256k1.PrivateKey{sourceKey},
+			expectedErr: nil,
 		},
 		{
 			description:   "attempting to import from C-chain",
@@ -129,13 +125,12 @@ func TestNewImportTx(t *testing.T) {
 					env.ctx.AVAXAssetID: env.config.TxFee,
 				},
 			),
-			sourceKeys:   []*crypto.PrivateKeySECP256K1R{sourceKey},
-			timestamp:    env.config.ApricotPhase5Time,
-			shouldErr:    false,
-			shouldVerify: true,
+			sourceKeys:  []*secp256k1.PrivateKey{sourceKey},
+			timestamp:   env.config.ApricotPhase5Time,
+			expectedErr: nil,
 		},
 		{
-			description:   "attempting to import non-avax from X-chain pre-blueberry",
+			description:   "attempting to import non-avax from X-chain",
 			sourceChainID: env.ctx.XChainID,
 			sharedMemory: fundedSharedMemory(
 				env.ctx.XChainID,
@@ -144,25 +139,9 @@ func TestNewImportTx(t *testing.T) {
 					customAssetID:       1,
 				},
 			),
-			sourceKeys:   []*crypto.PrivateKeySECP256K1R{sourceKey},
-			timestamp:    env.config.BlueberryTime.Add(-time.Second),
-			shouldErr:    false,
-			shouldVerify: false,
-		},
-		{
-			description:   "attempting to import non-avax from X-chain post-blueberry",
-			sourceChainID: env.ctx.XChainID,
-			sharedMemory: fundedSharedMemory(
-				env.ctx.XChainID,
-				map[ids.ID]uint64{
-					env.ctx.AVAXAssetID: env.config.TxFee,
-					customAssetID:       1,
-				},
-			),
-			sourceKeys:   []*crypto.PrivateKeySECP256K1R{sourceKey},
-			timestamp:    env.config.BlueberryTime,
-			shouldErr:    false,
-			shouldVerify: true,
+			sourceKeys:  []*secp256k1.PrivateKey{sourceKey},
+			timestamp:   env.config.BanffTime,
+			expectedErr: nil,
 		},
 	}
 
@@ -178,15 +157,16 @@ func TestNewImportTx(t *testing.T) {
 				tt.sourceKeys,
 				ids.ShortEmpty,
 			)
-			if tt.shouldErr {
-				require.Error(err)
+			require.ErrorIs(err, tt.expectedErr)
+			if tt.expectedErr != nil {
 				return
 			}
 			require.NoError(err)
 
 			unsignedTx := tx.Unsigned.(*txs.ImportTx)
 			require.NotEmpty(unsignedTx.ImportedInputs)
-			require.Equal(len(tx.Creds), len(unsignedTx.Ins)+len(unsignedTx.ImportedInputs), "should have the same number of credentials as inputs")
+			numInputs := len(unsignedTx.Ins) + len(unsignedTx.ImportedInputs)
+			require.Equal(len(tx.Creds), numInputs, "should have the same number of credentials as inputs")
 
 			totalIn := uint64(0)
 			for _, in := range unsignedTx.Ins {
@@ -200,7 +180,7 @@ func TestNewImportTx(t *testing.T) {
 				totalOut += out.Out.Amount()
 			}
 
-			require.Equal(env.config.TxFee, totalIn-totalOut, "burned too much")
+			require.Equal(env.config.TxFee, totalIn-totalOut)
 
 			fakedState, err := state.NewDiff(lastAcceptedID, env)
 			require.NoError(err)
@@ -216,12 +196,7 @@ func TestNewImportTx(t *testing.T) {
 				StateVersions: env,
 				Tx:            tx,
 			}
-			err = tx.Unsigned.Visit(&verifier)
-			if tt.shouldVerify {
-				require.NoError(err)
-			} else {
-				require.Error(err)
-			}
+			require.NoError(tx.Unsigned.Visit(&verifier))
 		})
 	}
 }

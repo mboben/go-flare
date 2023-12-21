@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package state
@@ -14,28 +14,30 @@ import (
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/choices"
+	"github.com/ava-labs/avalanchego/utils/constants"
+	"github.com/ava-labs/avalanchego/utils/units"
+	"github.com/ava-labs/avalanchego/utils/wrappers"
 	"github.com/ava-labs/avalanchego/vms/proposervm/block"
 )
 
-const (
-	blockCacheSize = 8192
-)
+const blockCacheSize = 64 * units.MiB
 
 var (
 	errBlockWrongVersion = errors.New("wrong version")
 
-	_ BlockState = &blockState{}
+	_ BlockState = (*blockState)(nil)
 )
 
 type BlockState interface {
 	GetBlock(blkID ids.ID) (block.Block, choices.Status, error)
 	PutBlock(blk block.Block, status choices.Status) error
+	DeleteBlock(blkID ids.ID) error
 }
 
 type blockState struct {
 	// Caches BlockID -> Block. If the Block is nil, that means the block is not
 	// in storage.
-	blkCache cache.Cacher
+	blkCache cache.Cacher[ids.ID, *blockWrapper]
 
 	db database.Database
 }
@@ -47,18 +49,31 @@ type blockWrapper struct {
 	block block.Block
 }
 
+func cachedBlockSize(_ ids.ID, bw *blockWrapper) int {
+	if bw == nil {
+		return ids.IDLen + constants.PointerOverhead
+	}
+	return ids.IDLen + len(bw.Block) + wrappers.IntLen + 2*constants.PointerOverhead
+}
+
 func NewBlockState(db database.Database) BlockState {
 	return &blockState{
-		blkCache: &cache.LRU{Size: blockCacheSize},
-		db:       db,
+		blkCache: cache.NewSizedLRU[ids.ID, *blockWrapper](
+			blockCacheSize,
+			cachedBlockSize,
+		),
+		db: db,
 	}
 }
 
 func NewMeteredBlockState(db database.Database, namespace string, metrics prometheus.Registerer) (BlockState, error) {
-	blkCache, err := metercacher.New(
+	blkCache, err := metercacher.New[ids.ID, *blockWrapper](
 		fmt.Sprintf("%s_block_cache", namespace),
 		metrics,
-		&cache.LRU{Size: blockCacheSize},
+		cache.NewSizedLRU[ids.ID, *blockWrapper](
+			blockCacheSize,
+			cachedBlockSize,
+		),
 	)
 
 	return &blockState{
@@ -68,12 +83,8 @@ func NewMeteredBlockState(db database.Database, namespace string, metrics promet
 }
 
 func (s *blockState) GetBlock(blkID ids.ID) (block.Block, choices.Status, error) {
-	if blkIntf, found := s.blkCache.Get(blkID); found {
-		if blkIntf == nil {
-			return nil, choices.Unknown, database.ErrNotFound
-		}
-		blk, ok := blkIntf.(*blockWrapper)
-		if !ok {
+	if blk, found := s.blkCache.Get(blkID); found {
+		if blk == nil {
 			return nil, choices.Unknown, database.ErrNotFound
 		}
 		return blk.block, blk.Status, nil
@@ -123,4 +134,9 @@ func (s *blockState) PutBlock(blk block.Block, status choices.Status) error {
 	blkID := blk.ID()
 	s.blkCache.Put(blkID, &blkWrapper)
 	return s.db.Put(blkID[:], bytes)
+}
+
+func (s *blockState) DeleteBlock(blkID ids.ID) error {
+	s.blkCache.Evict(blkID)
+	return s.db.Delete(blkID[:])
 }

@@ -33,23 +33,20 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ava-labs/coreth/core/rawdb"
+	"github.com/ava-labs/coreth/core/types"
 	"github.com/ava-labs/coreth/ethdb"
 	"github.com/ava-labs/coreth/trie"
+	"github.com/ava-labs/coreth/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
-var (
-	// emptyRoot is the known root hash of an empty trie.
-	emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
-
-	// emptyCode is the known hash of the empty EVM bytecode.
-	emptyCode = crypto.Keccak256Hash(nil)
+const (
+	snapshotCacheNamespace            = "state/snapshot/clean/fastcache" // prefix for detailed stats from the snapshot fastcache
+	snapshotCacheStatsUpdateFrequency = 1000                             // update stats from the snapshot fastcache once per 1000 ops
 )
 
 // generatorStats is a collection of statistics gathered by the snapshot generator
@@ -155,7 +152,7 @@ func generateSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache i
 		triedb:     triedb,
 		blockHash:  blockHash,
 		root:       root,
-		cache:      fastcache.New(cache * 1024 * 1024),
+		cache:      newMeteredSnapshotCache(cache * 1024 * 1024),
 		genMarker:  genMarker,
 		genPending: make(chan struct{}),
 		genAbort:   make(chan chan struct{}),
@@ -274,7 +271,8 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 		}
 	}
 	// Create an account and state iterator pointing to the current generator marker
-	accTrie, err := trie.NewSecure(common.Hash{}, dl.root, dl.triedb)
+	trieId := trie.StateTrieID(dl.root)
+	accTrie, err := trie.NewStateTrie(trieId, dl.triedb)
 	if err != nil {
 		// The account trie is missing (GC), surf the chain until one becomes available
 		stats.Info("Trie missing, state snapshotting paused", dl.root, dl.genMarker)
@@ -328,8 +326,9 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 		}
 		// If the iterated account is a contract, iterate through corresponding contract
 		// storage to generate snapshot entries.
-		if acc.Root != emptyRoot {
-			storeTrie, err := trie.NewSecure(accountHash, acc.Root, dl.triedb)
+		if acc.Root != types.EmptyRootHash {
+			storeTrieId := trie.StorageTrieID(dl.root, accountHash, acc.Root)
+			storeTrie, err := trie.NewStateTrie(storeTrieId, dl.triedb)
 			if err != nil {
 				log.Error("Generator failed to access storage trie", "root", dl.root, "account", accountHash, "stroot", acc.Root, "err", err)
 				abort := <-dl.genAbort
@@ -398,4 +397,8 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 	// Someone will be looking for us, wait it out
 	abort := <-dl.genAbort
 	close(abort)
+}
+
+func newMeteredSnapshotCache(size int) *utils.MeteredCache {
+	return utils.NewMeteredCache(size, "", snapshotCacheNamespace, snapshotCacheStatsUpdateFrequency)
 }

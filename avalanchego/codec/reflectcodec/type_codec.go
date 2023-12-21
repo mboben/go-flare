@@ -1,31 +1,36 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package reflectcodec
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math"
 	"reflect"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/ava-labs/avalanchego/codec"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
 )
 
 const (
 	// DefaultTagName that enables serialization.
-	DefaultTagName = "serialize"
+	DefaultTagName  = "serialize"
+	initialSliceLen = 16
 )
 
 var (
-	errMarshalNil   = errors.New("can't marshal nil pointer or interface")
-	errUnmarshalNil = errors.New("can't unmarshal nil")
-	errNeedPointer  = errors.New("argument to unmarshal must be a pointer")
-	errExtraSpace   = errors.New("trailing buffer space")
-)
+	_ codec.Codec = (*genericCodec)(nil)
 
-var _ codec.Codec = &genericCodec{}
+	errMarshalNil              = errors.New("can't marshal nil pointer or interface")
+	errUnmarshalNil            = errors.New("can't unmarshal nil")
+	errNeedPointer             = errors.New("argument to unmarshal must be a pointer")
+	errRecursiveInterfaceTypes = errors.New("recursive interface types")
+)
 
 type TypeCodec interface {
 	// UnpackPrefix unpacks the prefix of an interface from the given packer.
@@ -40,22 +45,31 @@ type TypeCodec interface {
 	// When deserializing the bytes, the prefix specifies which concrete type
 	// to deserialize into.
 	PackPrefix(*wrappers.Packer, reflect.Type) error
+
+	// PrefixSize returns prefix length for the given type into the given
+	// packer.
+	PrefixSize(reflect.Type) int
 }
 
 // genericCodec handles marshaling and unmarshaling of structs with a generic
 // implementation for interface encoding.
 //
 // A few notes:
-// 1) We use "marshal" and "serialize" interchangeably, and "unmarshal" and "deserialize" interchangeably
-// 2) To include a field of a struct in the serialized form, add the tag `{tagName}:"true"` to it. `{tagName}` defaults to `serialize`.
-// 3) These typed members of a struct may be serialized:
-//    bool, string, uint[8,16,32,64], int[8,16,32,64],
-//	  structs, slices, arrays, interface.
-//	  structs, slices and arrays can only be serialized if their constituent values can be.
-// 4) To marshal an interface, you must pass a pointer to the value
-// 5) To unmarshal an interface,  you must call codec.RegisterType([instance of the type that fulfills the interface]).
-// 6) Serialized fields must be exported
-// 7) nil slices are marshaled as empty slices
+//
+//  1. We use "marshal" and "serialize" interchangeably, and "unmarshal" and
+//     "deserialize" interchangeably
+//  2. To include a field of a struct in the serialized form, add the tag
+//     `{tagName}:"true"` to it. `{tagName}` defaults to `serialize`.
+//  3. These typed members of a struct may be serialized:
+//     bool, string, uint[8,16,32,64], int[8,16,32,64],
+//     structs, slices, arrays, maps, interface.
+//     structs, slices, maps and arrays can only be serialized if their constituent
+//     values can be.
+//  4. To marshal an interface, you must pass a pointer to the value
+//  5. To unmarshal an interface, you must call
+//     codec.RegisterType([instance of the type that fulfills the interface]).
+//  6. Serialized fields must be exported
+//  7. nil slices are marshaled as empty slices
 type genericCodec struct {
 	typer       TypeCodec
 	maxSliceLen uint32
@@ -71,28 +85,242 @@ func New(typer TypeCodec, tagNames []string, maxSliceLen uint32) codec.Codec {
 	}
 }
 
+func (c *genericCodec) Size(value interface{}) (int, error) {
+	if value == nil {
+		return 0, errMarshalNil // can't marshal nil
+	}
+
+	size, _, err := c.size(reflect.ValueOf(value), false /*=nullable*/, nil /*=typeStack*/)
+	return size, err
+}
+
+// size returns the size of the value along with whether the value is constant
+// sized. This function takes into account a `nullable` property which allows
+// pointers and interfaces to serialize nil values
+func (c *genericCodec) size(
+	value reflect.Value,
+	nullable bool,
+	typeStack set.Set[reflect.Type],
+) (int, bool, error) {
+	switch valueKind := value.Kind(); valueKind {
+	case reflect.Uint8:
+		return wrappers.ByteLen, true, nil
+	case reflect.Int8:
+		return wrappers.ByteLen, true, nil
+	case reflect.Uint16:
+		return wrappers.ShortLen, true, nil
+	case reflect.Int16:
+		return wrappers.ShortLen, true, nil
+	case reflect.Uint32:
+		return wrappers.IntLen, true, nil
+	case reflect.Int32:
+		return wrappers.IntLen, true, nil
+	case reflect.Uint64:
+		return wrappers.LongLen, true, nil
+	case reflect.Int64:
+		return wrappers.LongLen, true, nil
+	case reflect.Bool:
+		return wrappers.BoolLen, true, nil
+	case reflect.String:
+		return wrappers.StringLen(value.String()), false, nil
+	case reflect.Ptr:
+		if value.IsNil() {
+			if !nullable {
+				return 0, false, errMarshalNil
+			}
+			return wrappers.BoolLen, false, nil
+		}
+
+		size, constSize, err := c.size(value.Elem(), false /*=nullable*/, typeStack)
+		if nullable {
+			return wrappers.BoolLen + size, false, err
+		}
+		return size, constSize, err
+
+	case reflect.Interface:
+		if value.IsNil() {
+			if !nullable {
+				return 0, false, errMarshalNil
+			}
+			return wrappers.BoolLen, false, nil
+		}
+
+		underlyingValue := value.Interface()
+		underlyingType := reflect.TypeOf(underlyingValue)
+		if typeStack.Contains(underlyingType) {
+			return 0, false, fmt.Errorf("%w: %s", errRecursiveInterfaceTypes, underlyingType)
+		}
+		typeStack.Add(underlyingType)
+
+		prefixSize := c.typer.PrefixSize(underlyingType)
+		valueSize, _, err := c.size(value.Elem(), false /*=nullable*/, typeStack)
+
+		typeStack.Remove(underlyingType)
+		if nullable {
+			return wrappers.BoolLen + prefixSize + valueSize, false, err
+		}
+		return prefixSize + valueSize, false, err
+
+	case reflect.Slice:
+		numElts := value.Len()
+		if numElts == 0 {
+			return wrappers.IntLen, false, nil
+		}
+
+		size, constSize, err := c.size(value.Index(0), nullable, typeStack)
+		if err != nil {
+			return 0, false, err
+		}
+
+		// For fixed-size types we manually calculate lengths rather than
+		// processing each element separately to improve performance.
+		if constSize {
+			return wrappers.IntLen + numElts*size, false, nil
+		}
+
+		for i := 1; i < numElts; i++ {
+			innerSize, _, err := c.size(value.Index(i), nullable, typeStack)
+			if err != nil {
+				return 0, false, err
+			}
+			size += innerSize
+		}
+		return wrappers.IntLen + size, false, nil
+
+	case reflect.Array:
+		numElts := value.Len()
+		if numElts == 0 {
+			return 0, true, nil
+		}
+
+		size, constSize, err := c.size(value.Index(0), nullable, typeStack)
+		if err != nil {
+			return 0, false, err
+		}
+
+		// For fixed-size types we manually calculate lengths rather than
+		// processing each element separately to improve performance.
+		if constSize {
+			return numElts * size, true, nil
+		}
+
+		for i := 1; i < numElts; i++ {
+			innerSize, _, err := c.size(value.Index(i), nullable, typeStack)
+			if err != nil {
+				return 0, false, err
+			}
+			size += innerSize
+		}
+		return size, false, nil
+
+	case reflect.Struct:
+		serializedFields, err := c.fielder.GetSerializedFields(value.Type())
+		if err != nil {
+			return 0, false, err
+		}
+
+		var (
+			size      int
+			constSize = true
+		)
+		for _, fieldDesc := range serializedFields {
+			innerSize, innerConstSize, err := c.size(value.Field(fieldDesc.Index), fieldDesc.Nullable, typeStack)
+			if err != nil {
+				return 0, false, err
+			}
+			size += innerSize
+			constSize = constSize && innerConstSize
+		}
+		return size, constSize, nil
+
+	case reflect.Map:
+		iter := value.MapRange()
+		if !iter.Next() {
+			return wrappers.IntLen, false, nil
+		}
+
+		keySize, keyConstSize, err := c.size(iter.Key(), false /*=nullable*/, typeStack)
+		if err != nil {
+			return 0, false, err
+		}
+		valueSize, valueConstSize, err := c.size(iter.Value(), nullable, typeStack)
+		if err != nil {
+			return 0, false, err
+		}
+
+		switch {
+		case keyConstSize && valueConstSize:
+			numElts := value.Len()
+			return wrappers.IntLen + numElts*(keySize+valueSize), false, nil
+		case keyConstSize:
+			var (
+				numElts        = 1
+				totalValueSize = valueSize
+			)
+			for iter.Next() {
+				valueSize, _, err := c.size(iter.Value(), nullable, typeStack)
+				if err != nil {
+					return 0, false, err
+				}
+				totalValueSize += valueSize
+				numElts++
+			}
+			return wrappers.IntLen + numElts*keySize + totalValueSize, false, nil
+		case valueConstSize:
+			var (
+				numElts      = 1
+				totalKeySize = keySize
+			)
+			for iter.Next() {
+				keySize, _, err := c.size(iter.Key(), false /*=nullable*/, typeStack)
+				if err != nil {
+					return 0, false, err
+				}
+				totalKeySize += keySize
+				numElts++
+			}
+			return wrappers.IntLen + totalKeySize + numElts*valueSize, false, nil
+		default:
+			totalSize := wrappers.IntLen + keySize + valueSize
+			for iter.Next() {
+				keySize, _, err := c.size(iter.Key(), false /*=nullable*/, typeStack)
+				if err != nil {
+					return 0, false, err
+				}
+				valueSize, _, err := c.size(iter.Value(), nullable, typeStack)
+				if err != nil {
+					return 0, false, err
+				}
+				totalSize += keySize + valueSize
+			}
+			return totalSize, false, nil
+		}
+
+	default:
+		return 0, false, fmt.Errorf("can't evaluate marshal length of unknown kind %s", valueKind)
+	}
+}
+
 // To marshal an interface, [value] must be a pointer to the interface
 func (c *genericCodec) MarshalInto(value interface{}, p *wrappers.Packer) error {
 	if value == nil {
 		return errMarshalNil // can't marshal nil
 	}
 
-	return c.marshal(reflect.ValueOf(value), p, c.maxSliceLen)
+	return c.marshal(reflect.ValueOf(value), p, c.maxSliceLen, false /*=nullable*/, nil /*=typeStack*/)
 }
 
 // marshal writes the byte representation of [value] to [p]
-// [value]'s underlying value must not be a nil pointer or interface
+//
 // c.lock should be held for the duration of this function
-func (c *genericCodec) marshal(value reflect.Value, p *wrappers.Packer, maxSliceLen uint32) error {
-	valueKind := value.Kind()
-	switch valueKind {
-	case reflect.Interface, reflect.Ptr, reflect.Invalid:
-		if value.IsNil() { // Can't marshal nil (except nil slices)
-			return errMarshalNil
-		}
-	}
-
-	switch valueKind {
+func (c *genericCodec) marshal(
+	value reflect.Value,
+	p *wrappers.Packer,
+	maxSliceLen uint32,
+	nullable bool,
+	typeStack set.Set[reflect.Type],
+) error {
+	switch valueKind := value.Kind(); valueKind {
 	case reflect.Uint8:
 		p.PackByte(uint8(value.Uint()))
 		return p.Err
@@ -123,28 +351,61 @@ func (c *genericCodec) marshal(value reflect.Value, p *wrappers.Packer, maxSlice
 	case reflect.Bool:
 		p.PackBool(value.Bool())
 		return p.Err
-	case reflect.Uintptr, reflect.Ptr:
-		return c.marshal(value.Elem(), p, c.maxSliceLen)
+	case reflect.Ptr:
+		isNil := value.IsNil()
+		if nullable {
+			p.PackBool(isNil)
+			if isNil || p.Err != nil {
+				return p.Err
+			}
+		} else if isNil {
+			return errMarshalNil
+		}
+
+		return c.marshal(value.Elem(), p, c.maxSliceLen, false /*=nullable*/, typeStack)
 	case reflect.Interface:
+		isNil := value.IsNil()
+		if nullable {
+			p.PackBool(isNil)
+			if isNil || p.Err != nil {
+				return p.Err
+			}
+		} else if isNil {
+			return errMarshalNil
+		}
+
 		underlyingValue := value.Interface()
 		underlyingType := reflect.TypeOf(underlyingValue)
+		if typeStack.Contains(underlyingType) {
+			return fmt.Errorf("%w: %s", errRecursiveInterfaceTypes, underlyingType)
+		}
+		typeStack.Add(underlyingType)
 		if err := c.typer.PackPrefix(p, underlyingType); err != nil {
 			return err
 		}
-		if err := c.marshal(value.Elem(), p, c.maxSliceLen); err != nil {
+		if err := c.marshal(value.Elem(), p, c.maxSliceLen, false /*=nullable*/, typeStack); err != nil {
 			return err
 		}
+		typeStack.Remove(underlyingType)
 		return p.Err
 	case reflect.Slice:
 		numElts := value.Len() // # elements in the slice/array. 0 if this slice is nil.
 		if uint32(numElts) > maxSliceLen {
-			return fmt.Errorf("slice length, %d, exceeds maximum length, %d",
+			return fmt.Errorf("%w; slice length, %d, exceeds maximum length, %d",
+				codec.ErrMaxSliceLenExceeded,
 				numElts,
-				maxSliceLen)
+				maxSliceLen,
+			)
 		}
 		p.PackInt(uint32(numElts)) // pack # elements
 		if p.Err != nil {
 			return p.Err
+		}
+		if numElts == 0 {
+			// Returning here prevents execution of the (expensive) reflect
+			// calls below which check if the slice is []byte and, if it is,
+			// the call of value.Bytes()
+			return nil
 		}
 		// If this is a slice of bytes, manually pack the bytes rather
 		// than calling marshal on each byte. This improves performance.
@@ -153,7 +414,7 @@ func (c *genericCodec) marshal(value reflect.Value, p *wrappers.Packer, maxSlice
 			return p.Err
 		}
 		for i := 0; i < numElts; i++ { // Process each element in the slice
-			if err := c.marshal(value.Index(i), p, c.maxSliceLen); err != nil {
+			if err := c.marshal(value.Index(i), p, c.maxSliceLen, nullable, typeStack); err != nil {
 				return err
 			}
 		}
@@ -166,10 +427,14 @@ func (c *genericCodec) marshal(value reflect.Value, p *wrappers.Packer, maxSlice
 			return p.Err
 		}
 		if uint32(numElts) > c.maxSliceLen {
-			return fmt.Errorf("array length, %d, exceeds maximum length, %d", numElts, c.maxSliceLen)
+			return fmt.Errorf("%w; array length, %d, exceeds maximum length, %d",
+				codec.ErrMaxSliceLenExceeded,
+				numElts,
+				c.maxSliceLen,
+			)
 		}
 		for i := 0; i < numElts; i++ { // Process each element in the array
-			if err := c.marshal(value.Index(i), p, c.maxSliceLen); err != nil {
+			if err := c.marshal(value.Index(i), p, c.maxSliceLen, nullable, typeStack); err != nil {
 				return err
 			}
 		}
@@ -180,18 +445,83 @@ func (c *genericCodec) marshal(value reflect.Value, p *wrappers.Packer, maxSlice
 			return err
 		}
 		for _, fieldDesc := range serializedFields { // Go through all fields of this struct that are serialized
-			if err := c.marshal(value.Field(fieldDesc.Index), p, fieldDesc.MaxSliceLen); err != nil { // Serialize the field and write to byte array
+			if err := c.marshal(value.Field(fieldDesc.Index), p, fieldDesc.MaxSliceLen, fieldDesc.Nullable, typeStack); err != nil { // Serialize the field and write to byte array
 				return err
 			}
 		}
 		return nil
+	case reflect.Map:
+		keys := value.MapKeys()
+		numElts := len(keys)
+		if uint32(numElts) > maxSliceLen {
+			return fmt.Errorf("%w; map length, %d, exceeds maximum length, %d",
+				codec.ErrMaxSliceLenExceeded,
+				numElts,
+				maxSliceLen,
+			)
+		}
+		p.PackInt(uint32(numElts)) // pack # elements
+		if p.Err != nil {
+			return p.Err
+		}
+
+		// pack key-value pairs sorted by increasing key
+		type keyTuple struct {
+			key        reflect.Value
+			startIndex int
+			endIndex   int
+		}
+
+		sortedKeys := make([]keyTuple, len(keys))
+		startOffset := p.Offset
+		endOffset := p.Offset
+		for i, key := range keys {
+			if err := c.marshal(key, p, c.maxSliceLen, false /*=nullable*/, typeStack); err != nil {
+				return err
+			}
+			if p.Err != nil {
+				return fmt.Errorf("couldn't marshal map key %+v: %w ", key, p.Err)
+			}
+			sortedKeys[i] = keyTuple{
+				key:        key,
+				startIndex: endOffset,
+				endIndex:   p.Offset,
+			}
+			endOffset = p.Offset
+		}
+
+		slices.SortFunc(sortedKeys, func(a, b keyTuple) bool {
+			aBytes := p.Bytes[a.startIndex:a.endIndex]
+			bBytes := p.Bytes[b.startIndex:b.endIndex]
+			return bytes.Compare(aBytes, bBytes) < 0
+		})
+
+		allKeyBytes := slices.Clone(p.Bytes[startOffset:p.Offset])
+		p.Offset = startOffset
+		for _, key := range sortedKeys {
+			// pack key
+			startIndex := key.startIndex - startOffset
+			endIndex := key.endIndex - startOffset
+			keyBytes := allKeyBytes[startIndex:endIndex]
+			p.PackFixedBytes(keyBytes)
+			if p.Err != nil {
+				return p.Err
+			}
+
+			// serialize and pack value
+			if err := c.marshal(value.MapIndex(key.key), p, c.maxSliceLen, nullable, typeStack); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	default:
-		return fmt.Errorf("can't marshal unknown kind %s", valueKind)
+		return fmt.Errorf("%w: %s", codec.ErrUnsupportedType, valueKind)
 	}
 }
 
-// Unmarshal unmarshals [bytes] into [dest], where
-// [dest] must be a pointer or interface
+// Unmarshal unmarshals [bytes] into [dest], where [dest] must be a pointer or
+// interface
 func (c *genericCodec) Unmarshal(bytes []byte, dest interface{}) error {
 	if dest == nil {
 		return errUnmarshalNil
@@ -204,18 +534,33 @@ func (c *genericCodec) Unmarshal(bytes []byte, dest interface{}) error {
 	if destPtr.Kind() != reflect.Ptr {
 		return errNeedPointer
 	}
-	if err := c.unmarshal(&p, destPtr.Elem(), c.maxSliceLen); err != nil {
+	if err := c.unmarshal(&p, destPtr.Elem(), c.maxSliceLen, false /*=nullable*/, nil /*=typeStack*/); err != nil {
 		return err
 	}
 	if p.Offset != len(bytes) {
-		return errExtraSpace
+		return fmt.Errorf("%w: read %d provided %d",
+			codec.ErrExtraSpace,
+			p.Offset,
+			len(bytes),
+		)
 	}
 	return nil
 }
 
 // Unmarshal from p.Bytes into [value]. [value] must be addressable.
+//
+// The [nullable] property affects how pointers and interfaces are unmarshalled,
+// as an extra byte would be used to unmarshal nil values for pointers and
+// interaces
+//
 // c.lock should be held for the duration of this function
-func (c *genericCodec) unmarshal(p *wrappers.Packer, value reflect.Value, maxSliceLen uint32) error {
+func (c *genericCodec) unmarshal(
+	p *wrappers.Packer,
+	value reflect.Value,
+	maxSliceLen uint32,
+	nullable bool,
+	typeStack set.Set[reflect.Type],
+) error {
 	switch value.Kind() {
 	case reflect.Uint8:
 		value.SetUint(uint64(p.UnpackByte()))
@@ -277,29 +622,37 @@ func (c *genericCodec) unmarshal(p *wrappers.Packer, value reflect.Value, maxSli
 			return fmt.Errorf("couldn't unmarshal slice: %w", p.Err)
 		}
 		if numElts32 > maxSliceLen {
-			return fmt.Errorf("array length, %d, exceeds maximum length, %d",
+			return fmt.Errorf("%w; array length, %d, exceeds maximum length, %d",
+				codec.ErrMaxSliceLenExceeded,
 				numElts32,
-				maxSliceLen)
+				maxSliceLen,
+			)
 		}
 		if numElts32 > math.MaxInt32 {
-			return fmt.Errorf("array length, %d, exceeds maximum length, %d",
+			return fmt.Errorf("%w; array length, %d, exceeds maximum length, %d",
+				codec.ErrMaxSliceLenExceeded,
 				numElts32,
-				math.MaxInt32)
+				math.MaxInt32,
+			)
 		}
 		numElts := int(numElts32)
 
+		sliceType := value.Type()
+		innerType := sliceType.Elem()
+
 		// If this is a slice of bytes, manually unpack the bytes rather
 		// than calling unmarshal on each byte. This improves performance.
-		if elemKind := value.Type().Elem().Kind(); elemKind == reflect.Uint8 {
+		if elemKind := innerType.Kind(); elemKind == reflect.Uint8 {
 			value.SetBytes(p.UnpackFixedBytes(numElts))
 			return p.Err
 		}
-		// set [value] to be a slice of the appropriate type/capacity (right now it is nil)
-		value.Set(reflect.MakeSlice(value.Type(), numElts, numElts))
-		// Unmarshal each element into the appropriate index of the slice
+		// Unmarshal each element and append it into the slice.
+		value.Set(reflect.MakeSlice(sliceType, 0, initialSliceLen))
+		zeroValue := reflect.Zero(innerType)
 		for i := 0; i < numElts; i++ {
-			if err := c.unmarshal(p, value.Index(i), c.maxSliceLen); err != nil {
-				return fmt.Errorf("couldn't unmarshal slice element: %w", err)
+			value.Set(reflect.Append(value, zeroValue))
+			if err := c.unmarshal(p, value.Index(i), c.maxSliceLen, nullable, typeStack); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -316,8 +669,8 @@ func (c *genericCodec) unmarshal(p *wrappers.Packer, value reflect.Value, maxSli
 			return nil
 		}
 		for i := 0; i < numElts; i++ {
-			if err := c.unmarshal(p, value.Index(i), c.maxSliceLen); err != nil {
-				return fmt.Errorf("couldn't unmarshal array element: %w", err)
+			if err := c.unmarshal(p, value.Index(i), c.maxSliceLen, nullable, typeStack); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -328,15 +681,29 @@ func (c *genericCodec) unmarshal(p *wrappers.Packer, value reflect.Value, maxSli
 		}
 		return nil
 	case reflect.Interface:
+		if nullable {
+			isNil := p.UnpackBool()
+			if isNil || p.Err != nil {
+				return p.Err
+			}
+		}
+
 		intfImplementor, err := c.typer.UnpackPrefix(p, value.Type())
 		if err != nil {
 			return err
 		}
-		// Unmarshal into the struct
-		if err := c.unmarshal(p, intfImplementor, c.maxSliceLen); err != nil {
-			return fmt.Errorf("couldn't unmarshal interface: %w", err)
+		intfImplementorType := intfImplementor.Type()
+		if typeStack.Contains(intfImplementorType) {
+			return fmt.Errorf("%w: %s", errRecursiveInterfaceTypes, intfImplementorType)
 		}
-		// And assign the filled struct to the value
+		typeStack.Add(intfImplementorType)
+
+		// Unmarshal into the struct
+		if err := c.unmarshal(p, intfImplementor, c.maxSliceLen, false /*=nullable*/, typeStack); err != nil {
+			return err
+		}
+
+		typeStack.Remove(intfImplementorType)
 		value.Set(intfImplementor)
 		return nil
 	case reflect.Struct:
@@ -347,25 +714,86 @@ func (c *genericCodec) unmarshal(p *wrappers.Packer, value reflect.Value, maxSli
 		}
 		// Go through the fields and umarshal into them
 		for _, fieldDesc := range serializedFieldIndices {
-			if err := c.unmarshal(p, value.Field(fieldDesc.Index), fieldDesc.MaxSliceLen); err != nil {
-				return fmt.Errorf("couldn't unmarshal struct: %w", err)
+			if err := c.unmarshal(p, value.Field(fieldDesc.Index), fieldDesc.MaxSliceLen, fieldDesc.Nullable, typeStack); err != nil {
+				return err
 			}
 		}
 		return nil
 	case reflect.Ptr:
+		if nullable {
+			isNil := p.UnpackBool()
+			if isNil || p.Err != nil {
+				return p.Err
+			}
+		}
+
 		// Get the type this pointer points to
 		t := value.Type().Elem()
 		// Create a new pointer to a new value of the underlying type
 		v := reflect.New(t)
 		// Fill the value
-		if err := c.unmarshal(p, v.Elem(), c.maxSliceLen); err != nil {
-			return fmt.Errorf("couldn't unmarshal pointer: %w", err)
+		if err := c.unmarshal(p, v.Elem(), c.maxSliceLen, false /*=nullable*/, typeStack); err != nil {
+			return err
 		}
 		// Assign to the top-level struct's member
 		value.Set(v)
 		return nil
-	case reflect.Invalid:
-		return errUnmarshalNil
+	case reflect.Map:
+		numElts32 := p.UnpackInt()
+		if p.Err != nil {
+			return fmt.Errorf("couldn't unmarshal map: %w", p.Err)
+		}
+		if numElts32 > c.maxSliceLen {
+			return fmt.Errorf("%w; map length, %d, exceeds maximum length, %d",
+				codec.ErrMaxSliceLenExceeded,
+				numElts32,
+				c.maxSliceLen,
+			)
+		}
+
+		var (
+			numElts      = int(numElts32)
+			mapType      = value.Type()
+			mapKeyType   = mapType.Key()
+			mapValueType = mapType.Elem()
+			prevKey      []byte
+		)
+
+		// Set [value] to be a new map of the appropriate type.
+		value.Set(reflect.MakeMap(mapType))
+
+		for i := 0; i < numElts; i++ {
+			mapKey := reflect.New(mapKeyType).Elem()
+
+			keyStartOffset := p.Offset
+
+			if err := c.unmarshal(p, mapKey, c.maxSliceLen, false /*=nullable*/, typeStack); err != nil {
+				return err
+			}
+
+			// Get the key's byte representation and check that the new key is
+			// actually bigger (according to bytes.Compare) than the previous
+			// key.
+			//
+			// We do this to enforce that key-value pairs are sorted by
+			// increasing key.
+			keyBytes := p.Bytes[keyStartOffset:p.Offset]
+			if i != 0 && bytes.Compare(keyBytes, prevKey) <= 0 {
+				return fmt.Errorf("keys aren't sorted: (%s, %s)", prevKey, mapKey)
+			}
+			prevKey = keyBytes
+
+			// Get the value
+			mapValue := reflect.New(mapValueType).Elem()
+			if err := c.unmarshal(p, mapValue, c.maxSliceLen, nullable, typeStack); err != nil {
+				return err
+			}
+
+			// Assign the key-value pair in the map
+			value.SetMapIndex(mapKey, mapValue)
+		}
+
+		return nil
 	default:
 		return fmt.Errorf("can't unmarshal unknown type %s", value.Kind().String())
 	}

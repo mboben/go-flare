@@ -1,14 +1,16 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package constants
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/utils/set"
 )
 
 // Const variables to be exported
@@ -113,8 +115,11 @@ var (
 		StagingHRP:    StagingID,
 		LocalFlareHRP: LocalFlareID,
 	}
+	ProductionNetworkIDs = set.Of(MainnetID, FujiID)
 
 	ValidNetworkPrefix = "network-"
+
+	ErrParseNetworkName = errors.New("failed to parse network name")
 )
 
 // GetHRP returns the Human-Readable-Part of bech32 addresses for a networkID
@@ -147,7 +152,7 @@ func NetworkID(networkName string) (uint32, error) {
 	}
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse %q as a network name", networkName)
+		return 0, fmt.Errorf("%w: %q", ErrParseNetworkName, networkName)
 	}
 	return uint32(id), nil
 }

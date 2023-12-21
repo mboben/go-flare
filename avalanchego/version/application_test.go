@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package version
@@ -11,15 +11,17 @@ import (
 )
 
 func TestNewDefaultApplication(t *testing.T) {
+	require := require.New(t)
+
 	v := &Application{
 		Major: 1,
 		Minor: 2,
 		Patch: 3,
 	}
 
-	require.Equal(t, "avalanche/1.2.3", v.String())
-	require.NoError(t, v.Compatible(v))
-	require.False(t, v.Before(v))
+	require.Equal("avalanche/1.2.3", v.String())
+	require.NoError(v.Compatible(v))
+	require.False(v.Before(v))
 }
 
 func TestComparingVersions(t *testing.T) {
@@ -130,19 +132,14 @@ func TestComparingVersions(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(fmt.Sprintf("%s %s", test.myVersion, test.peerVersion), func(t *testing.T) {
+			require := require.New(t)
 			err := test.myVersion.Compatible(test.peerVersion)
-			if test.compatible && err != nil {
-				t.Fatalf("Expected version to be compatible but returned: %s",
-					err)
-			} else if !test.compatible && err == nil {
-				t.Fatalf("Expected version to be incompatible but returned no error")
+			if test.compatible {
+				require.NoError(err)
+			} else {
+				require.ErrorIs(err, errDifferentMajor)
 			}
-			before := test.myVersion.Before(test.peerVersion)
-			if test.before && !before {
-				t.Fatalf("Expected version to be before the peer version but wasn't")
-			} else if !test.before && before {
-				t.Fatalf("Expected version not to be before the peer version but was")
-			}
+			require.Equal(test.before, test.myVersion.Before(test.peerVersion))
 		})
 	}
 }

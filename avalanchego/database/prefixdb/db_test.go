@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package prefixdb
@@ -20,6 +20,18 @@ func TestInterface(t *testing.T) {
 		test(t, NewNested([]byte("wor"), New([]byte("ld"), db)))
 		test(t, NewNested([]byte("ld"), New([]byte("wor"), db)))
 	}
+}
+
+func FuzzKeyValue(f *testing.F) {
+	database.FuzzKeyValue(f, New([]byte(""), memdb.New()))
+}
+
+func FuzzNewIteratorWithPrefix(f *testing.F) {
+	database.FuzzNewIteratorWithPrefix(f, New([]byte(""), memdb.New()))
+}
+
+func FuzzNewIteratorWithStartAndPrefix(f *testing.F) {
+	database.FuzzNewIteratorWithStartAndPrefix(f, New([]byte(""), memdb.New()))
 }
 
 func BenchmarkInterface(b *testing.B) {

@@ -27,81 +27,19 @@
 package trie
 
 import (
-	"math/rand"
-	"testing"
-	"time"
-
-	"github.com/ava-labs/coreth/ethdb/memorydb"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/stretchr/testify/assert"
+	"github.com/ava-labs/coreth/core/rawdb"
+	"github.com/ava-labs/coreth/ethdb"
+	"github.com/ava-labs/coreth/trie/triedb/hashdb"
 )
 
-// Tests that the trie database returns a missing trie node error if attempting
-// to retrieve the meta root.
-func TestDatabaseMetarootFetch(t *testing.T) {
-	db := NewDatabase(memorydb.New())
-	if _, err := db.RawNode(common.Hash{}); err == nil {
-		t.Fatalf("metaroot retrieval succeeded")
+// newTestDatabase initializes the trie database with specified scheme.
+func newTestDatabase(diskdb ethdb.Database, scheme string) *Database {
+	db := prepare(diskdb, nil)
+	if scheme == rawdb.HashScheme {
+		db.backend = hashdb.New(diskdb, db.cleans, mptResolver{})
 	}
-}
-
-// Tests that calling dereference does not interfere with a concurrent commit on
-// a trie with the same underlying trieDB.
-func TestDereferenceWhileCommit(t *testing.T) {
-	var (
-		numKeys = 10
-		keyLen  = 10
-		db      = NewDatabase(memorydb.New())
-	)
-
-	// set up a database with a small trie
-	tr1 := NewEmpty(db)
-	rand.Seed(1) // set random seed so we get deterministic key/values
-	FillTrie(t, numKeys, keyLen, tr1)
-	root, _, err := tr1.Commit(nil, false)
-	assert.NoError(t, err)
-	assert.NotZero(t, root)
-	db.Reference(root, common.Hash{}, true)
-
-	// call Dereference from onleafs to simulate
-	// this occurring concurrently.
-	// the second trie has one more leaf so it
-	// does not share the same root as the first trie.
-	firstLeaf := true
-	tr2 := NewEmpty(db)
-	rand.Seed(1) // set random seed so we get deterministic key/values
-	FillTrie(t, numKeys+1, keyLen, tr2)
-	done := make(chan struct{})
-	onleaf := func([][]byte, []byte, []byte, common.Hash, []byte) error {
-		if firstLeaf {
-			go func() {
-				db.Dereference(root)
-				close(done)
-			}()
-			select {
-			case <-done:
-				t.Fatal("Dereference succeeded within leaf callback")
-			case <-time.After(time.Second):
-			}
-			firstLeaf = false
-		}
-		return nil
-	}
-	root2, _, err := tr2.Commit(onleaf, false)
-	assert.NoError(t, err)
-	assert.NotEqual(t, root, root2)
-	db.Reference(root2, common.Hash{}, true)
-
-	// wait for the goroutine to exit.
-	<-done
-
-	// expected behavior is for root2 to
-	// be present and the trie should iterate
-	// without missing nodes.
-	tr3, err := New(common.Hash{}, root2, db)
-	assert.NoError(t, err)
-	it := tr3.NodeIterator(nil)
-	for it.Next(true) {
-	}
-	assert.NoError(t, it.Error())
+	//} else {
+	//	db.backend = snap.New(diskdb, db.cleans, nil)
+	//}
+	return db
 }

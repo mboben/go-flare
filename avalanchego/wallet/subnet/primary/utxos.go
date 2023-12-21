@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package primary
@@ -7,21 +7,17 @@ import (
 	"context"
 	"sync"
 
+	"golang.org/x/exp/maps"
+
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
-	"github.com/ava-labs/avalanchego/wallet/chain/p"
-	"github.com/ava-labs/avalanchego/wallet/chain/x"
+	"github.com/ava-labs/avalanchego/wallet/subnet/primary/common"
 )
 
 var (
-	_ UTXOs      = &utxos{}
-	_ ChainUTXOs = &chainUTXOs{}
-
-	// TODO: refactor ChainUTXOs definition to allow the client implementations
-	//       to perform their own assertions.
-	_ ChainUTXOs = p.ChainUTXOs(nil)
-	_ ChainUTXOs = x.ChainUTXOs(nil)
+	_ UTXOs             = (*utxos)(nil)
+	_ common.ChainUTXOs = (*chainUTXOs)(nil)
 )
 
 type UTXOs interface {
@@ -32,21 +28,13 @@ type UTXOs interface {
 	GetUTXO(ctx context.Context, sourceChainID, destinationChainID, utxoID ids.ID) (*avax.UTXO, error)
 }
 
-type ChainUTXOs interface {
-	AddUTXO(ctx context.Context, destinationChainID ids.ID, utxo *avax.UTXO) error
-	RemoveUTXO(ctx context.Context, sourceChainID, utxoID ids.ID) error
-
-	UTXOs(ctx context.Context, sourceChainID ids.ID) ([]*avax.UTXO, error)
-	GetUTXO(ctx context.Context, sourceChainID, utxoID ids.ID) (*avax.UTXO, error)
-}
-
 func NewUTXOs() UTXOs {
 	return &utxos{
 		sourceToDestToUTXOIDToUTXO: make(map[ids.ID]map[ids.ID]map[ids.ID]*avax.UTXO),
 	}
 }
 
-func NewChainUTXOs(chainID ids.ID, utxos UTXOs) ChainUTXOs {
+func NewChainUTXOs(chainID ids.ID, utxos UTXOs) common.ChainUTXOs {
 	return &chainUTXOs{
 		utxos:   utxos,
 		chainID: chainID,
@@ -110,11 +98,7 @@ func (u *utxos) UTXOs(_ context.Context, sourceChainID, destinationChainID ids.I
 
 	destToUTXOIDToUTXO := u.sourceToDestToUTXOIDToUTXO[sourceChainID]
 	utxoIDToUTXO := destToUTXOIDToUTXO[destinationChainID]
-	utxos := make([]*avax.UTXO, 0, len(utxoIDToUTXO))
-	for _, utxo := range utxoIDToUTXO {
-		utxos = append(utxos, utxo)
-	}
-	return utxos, nil
+	return maps.Values(utxoIDToUTXO), nil
 }
 
 func (u *utxos) GetUTXO(_ context.Context, sourceChainID, destinationChainID, utxoID ids.ID) (*avax.UTXO, error) {
