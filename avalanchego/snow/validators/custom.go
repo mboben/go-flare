@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/constants"
@@ -17,6 +18,13 @@ const (
 	costonValidatorWeight   = 200_000
 	customValidatorWeight   = 200_000
 	customValidatorEnv      = "CUSTOM_VALIDATORS"
+	customValidatorExpEnv   = "CUSTOM_VALIDATORS_EXPIRATION"
+)
+
+var (
+	songbirdValidatorsExpTime = time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	costonValidatorsExpTime   = time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	customValidatorsExpTime   = time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
 )
 
 var (
@@ -32,8 +40,12 @@ func IsDefaultValidator(vdrID ids.NodeID) bool {
 	return defaultValidators.isValidator(vdrID)
 }
 
-func InitializeDefaultValidators(networkID uint32) {
-	defaultValidators.initialize(networkID)
+func InitializeDefaultValidators(networkID uint32, timestamp time.Time) {
+	defaultValidators.initialize(networkID, timestamp)
+}
+
+func ExpiredDefaultValidators(networkID uint32, timestamp time.Time) []Validator {
+	return defaultValidators.expiredValidators(networkID, timestamp)
 }
 
 type defaultValidatorSet struct {
@@ -41,7 +53,7 @@ type defaultValidatorSet struct {
 	vdrMap      map[ids.NodeID]Validator
 }
 
-func (dvs *defaultValidatorSet) initialize(networkID uint32) {
+func (dvs *defaultValidatorSet) initialize(networkID uint32, timestamp time.Time) {
 	if dvs.initialized {
 		return
 	}
@@ -49,11 +61,11 @@ func (dvs *defaultValidatorSet) initialize(networkID uint32) {
 	var vdrs []Validator
 	switch networkID {
 	case constants.LocalID:
-		vdrs = loadCustomValidators()
+		vdrs = loadCustomValidators(timestamp)
 	case constants.SongbirdID:
-		vdrs = loadSongbirdValidators()
+		vdrs = loadSongbirdValidators(timestamp)
 	case constants.CostonID:
-		vdrs = loadCostonValidators()
+		vdrs = loadCostonValidators(timestamp)
 	}
 	dvs.vdrMap = make(map[ids.NodeID]Validator)
 	for _, vdr := range vdrs {
@@ -81,13 +93,47 @@ func (dvs *defaultValidatorSet) isValidator(vdrID ids.NodeID) bool {
 	return ok
 }
 
-func loadCustomValidators() []Validator {
+func (dvs *defaultValidatorSet) expiredValidators(networkID uint32, timestamp time.Time) []Validator {
+	if !dvs.initialized {
+		panic(errNotInitialized)
+	}
+	switch networkID {
+	case constants.LocalID:
+		if !timestamp.Before(customValidatorsExpTime) {
+			return dvs.list()
+		}
+	case constants.SongbirdID:
+		if !timestamp.Before(songbirdValidatorsExpTime) {
+			dvs.list()
+		}
+	case constants.CostonID:
+		if !timestamp.Before(costonValidatorsExpTime) {
+			dvs.list()
+		}
+	}
+	return nil
+}
+
+func loadCustomValidators(timestamp time.Time) []Validator {
 	customValidatorList := os.Getenv(customValidatorEnv)
+	customValidatorExpString := os.Getenv(customValidatorExpEnv)
+	if len(customValidatorExpString) > 0 {
+		if t, err := time.Parse(time.RFC3339, customValidatorExpString); err == nil {
+			customValidatorsExpTime = t
+		}
+		// Ignore if error occurs, use default expiration time
+	}
+	if !timestamp.Before(customValidatorsExpTime) {
+		return nil
+	}
 	nodeIDs := strings.Split(customValidatorList, ",")
 	return createValidators(nodeIDs, uint64(customValidatorWeight))
 }
 
-func loadCostonValidators() []Validator {
+func loadCostonValidators(timestamp time.Time) []Validator {
+	if !timestamp.Before(costonValidatorsExpTime) {
+		return nil
+	}
 	nodeIDs := []string{
 		"NodeID-5dDZXn99LCkDoEi6t9gTitZuQmhokxQTc",
 		"NodeID-EkH8wyEshzEQBToAdR7Fexxcj9rrmEEHZ",
@@ -98,7 +144,10 @@ func loadCostonValidators() []Validator {
 	return createValidators(nodeIDs, uint64(costonValidatorWeight))
 }
 
-func loadSongbirdValidators() []Validator {
+func loadSongbirdValidators(timestamp time.Time) []Validator {
+	if !timestamp.Before(songbirdValidatorsExpTime) {
+		return nil
+	}
 	nodeIDs := []string{
 		"NodeID-3M9KVT6ixi4gVMisbm5TnPXYXgFN5LHuv",
 		"NodeID-NnX4fajAmyvpL9RLfheNdc47FKKDuQW8i",

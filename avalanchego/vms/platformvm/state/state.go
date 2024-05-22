@@ -333,7 +333,6 @@ func New(
 		return nil, err
 	}
 
-	// SGB-MERGE set uptimes of default validators
 	for _, vdr := range validators.DefaultValidatorList() {
 		s.uptimes[vdr.ID()] = &uptimeAndReward{
 			txID:        ids.Empty,
@@ -902,6 +901,10 @@ func (s *state) syncGenesis(genesisBlk *blocks.CommitBlock, genesis *genesis.Sta
 		s.AddChain(chain)
 		s.AddTx(chain, status.Committed)
 	}
+
+	// SGB-MERGE Initialize default validators
+	validators.InitializeDefaultValidators(s.ctx.NetworkID, s.GetTimestamp())
+
 	return s.write(0)
 }
 
@@ -913,6 +916,10 @@ func (s *state) load() error {
 		s.loadCurrentValidators(),
 		s.loadPendingValidators(),
 	)
+
+	// SGB-MERGE Initialize default validators
+	validators.InitializeDefaultValidators(s.ctx.NetworkID, s.GetTimestamp())
+
 	return errs.Err
 }
 
@@ -1456,6 +1463,14 @@ func (s *state) writeCurrentPrimaryNetworkStakers(height uint64) error {
 		}
 	}
 	s.validatorDiffsCache.Put(string(prefixBytes), weightDiffs)
+
+	// Handle default validators
+	for _, v := range validators.ExpiredDefaultValidators(s.GetNetworkID(), s.GetTimestamp()) {
+		err := s.cfg.Validators.RemoveWeight(constants.PrimaryNetworkID, v.ID(), v.Weight())
+		if err != nil {
+			return fmt.Errorf("failed to remove default validator weight: %w", err)
+		}
+	}
 
 	// TODO: Move validator set management out of the state package
 	//

@@ -119,9 +119,6 @@ func (vm *VM) Initialize(
 ) error {
 	ctx.Log.Verbo("initializing platform chain")
 
-	// SGB-MERGE: This is a new line of code
-	validators.InitializeDefaultValidators(ctx.NetworkID)
-
 	registerer := prometheus.NewRegistry()
 	if err := ctx.Metrics.Register(registerer); err != nil {
 		return err
