@@ -184,16 +184,16 @@ func getSongbirdInflationSettings(currentTimestamp time.Time, config *config.Con
 	default:
 		// Phase 2
 		return InflationSettings{
-			MinValidatorStake:        1 * units.MegaAvax,
+			MinValidatorStake:        10 * units.Avax,
 			MaxValidatorStake:        200 * units.MegaAvax,
-			MinDelegatorStake:        50 * units.KiloAvax,
+			MinDelegatorStake:        1 * units.Avax,
 			MinDelegationFee:         0,
 			MinStakeDuration:         60 * 24 * time.Hour,
 			MinDelegateDuration:      2 * 7 * 24 * time.Hour,
 			MaxStakeDuration:         365 * 24 * time.Hour,
 			MinFutureStartTimeOffset: MaxFutureStartTime,
 			MaxValidatorWeightFactor: 15,
-			MinStakeStartTime:        time.Date(2024, time.September, 3, 0, 0, 0, 0, time.UTC),
+			MinStakeStartTime:        time.Date(2024, time.September, 5, 12, 30, 0, 0, time.UTC),
 		}
 	}
 }
