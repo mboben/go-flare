@@ -27,6 +27,8 @@
 package ethconfig
 
 import (
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/ava-labs/coreth/core"
@@ -59,6 +61,17 @@ var DefaultFullGPOSgbConfig = gasprice.Config{
 
 // DefaultConfig contains default settings for use on the Avalanche main net.
 var DefaultConfig = NewDefaultConfig()
+
+func init() {
+	if gasPricePercentileStr := os.Getenv("GAS_PRICE_PERCENTILE"); gasPricePercentileStr != "" {
+		gasPricePercentile, err := strconv.Atoi(gasPricePercentileStr)
+		if err != nil || gasPricePercentile < 0 || gasPricePercentile > 100 {
+			panic("GAS_PRICE_PERCENTILE must be a value between 0 and 100")
+		}
+		DefaultFullGPOConfig.Percentile = gasPricePercentile
+		DefaultFullGPOSgbConfig.Percentile = gasPricePercentile
+	}
+}
 
 func NewDefaultConfig() Config {
 	return Config{
