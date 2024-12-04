@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package health
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -22,6 +23,8 @@ const (
 	checkFreq = time.Millisecond
 	awaitFreq = 50 * time.Microsecond
 )
+
+var errUnhealthy = errors.New("unhealthy")
 
 func awaitReadiness(r Reporter) {
 	for {
@@ -56,7 +59,7 @@ func awaitLiveness(r Reporter, liveness bool) {
 func TestDuplicatedRegistations(t *testing.T) {
 	require := require.New(t)
 
-	check := CheckerFunc(func() (interface{}, error) {
+	check := CheckerFunc(func(context.Context) (interface{}, error) {
 		return "", nil
 	})
 
@@ -82,7 +85,7 @@ func TestDuplicatedRegistations(t *testing.T) {
 func TestDefaultFailing(t *testing.T) {
 	require := require.New(t)
 
-	check := CheckerFunc(func() (interface{}, error) {
+	check := CheckerFunc(func(context.Context) (interface{}, error) {
 		return "", nil
 	})
 
@@ -126,7 +129,7 @@ func TestDefaultFailing(t *testing.T) {
 func TestPassingChecks(t *testing.T) {
 	require := require.New(t)
 
-	check := CheckerFunc(func() (interface{}, error) {
+	check := CheckerFunc(func(context.Context) (interface{}, error) {
 		return "", nil
 	})
 
@@ -140,7 +143,7 @@ func TestPassingChecks(t *testing.T) {
 	err = h.RegisterLivenessCheck("check", check)
 	require.NoError(err)
 
-	h.Start(checkFreq)
+	h.Start(context.Background(), checkFreq)
 	defer h.Stop()
 
 	{
@@ -189,13 +192,10 @@ func TestPassingChecks(t *testing.T) {
 func TestPassingThenFailingChecks(t *testing.T) {
 	require := require.New(t)
 
-	var (
-		shouldCheckErr utils.AtomicBool
-		checkErr       = errors.New("unhealthy")
-	)
-	check := CheckerFunc(func() (interface{}, error) {
-		if shouldCheckErr.GetValue() {
-			return checkErr.Error(), checkErr
+	var shouldCheckErr utils.Atomic[bool]
+	check := CheckerFunc(func(context.Context) (interface{}, error) {
+		if shouldCheckErr.Get() {
+			return errUnhealthy.Error(), errUnhealthy
 		}
 		return "", nil
 	})
@@ -210,7 +210,7 @@ func TestPassingThenFailingChecks(t *testing.T) {
 	err = h.RegisterLivenessCheck("check", check)
 	require.NoError(err)
 
-	h.Start(checkFreq)
+	h.Start(context.Background(), checkFreq)
 	defer h.Stop()
 
 	awaitReadiness(h)
@@ -228,7 +228,7 @@ func TestPassingThenFailingChecks(t *testing.T) {
 		require.True(liveness)
 	}
 
-	shouldCheckErr.SetValue(true)
+	shouldCheckErr.Set(true)
 
 	awaitHealthy(h, false)
 	awaitLiveness(h, false)
@@ -254,14 +254,14 @@ func TestDeadlockRegression(t *testing.T) {
 	require.NoError(err)
 
 	var lock sync.Mutex
-	check := CheckerFunc(func() (interface{}, error) {
+	check := CheckerFunc(func(context.Context) (interface{}, error) {
 		lock.Lock()
 		time.Sleep(time.Nanosecond)
 		lock.Unlock()
 		return "", nil
 	})
 
-	h.Start(time.Nanosecond)
+	h.Start(context.Background(), time.Nanosecond)
 	defer h.Stop()
 
 	for i := 0; i < 1000; i++ {

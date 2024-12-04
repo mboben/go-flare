@@ -126,18 +126,6 @@ func New(
 	if chainDb == nil {
 		return nil, errors.New("chainDb cannot be nil")
 	}
-	if !config.Pruning && config.TrieDirtyCache > 0 {
-		// If snapshots are enabled, allocate 2/5 of the TrieDirtyCache memory cap to the snapshot cache
-		if config.SnapshotCache > 0 {
-			config.TrieCleanCache += config.TrieDirtyCache * 3 / 5
-			config.SnapshotCache += config.TrieDirtyCache * 2 / 5
-		} else {
-			// If snapshots are disabled, the TrieDirtyCache will be written through to the clean cache
-			// so move the cache allocation from the dirty cache to the clean cache
-			config.TrieCleanCache += config.TrieDirtyCache
-			config.TrieDirtyCache = 0
-		}
-	}
 
 	// round TrieCleanCache and SnapshotCache up to nearest 64MB, since fastcache will mmap
 	// memory in 64MBs chunks.
@@ -145,12 +133,13 @@ func New(
 	config.SnapshotCache = roundUpCacheSize(config.SnapshotCache, 64)
 
 	log.Info(
-		"Allocated trie memory caches",
-		"clean", common.StorageSize(config.TrieCleanCache)*1024*1024,
-		"dirty", common.StorageSize(config.TrieDirtyCache)*1024*1024,
+		"Allocated memory caches",
+		"trie clean", common.StorageSize(config.TrieCleanCache)*1024*1024,
+		"trie dirty", common.StorageSize(config.TrieDirtyCache)*1024*1024,
+		"snapshot clean", common.StorageSize(config.SnapshotCache)*1024*1024,
 	)
 
-	chainConfig, genesisErr := core.SetupGenesisBlock(chainDb, config.Genesis, lastAcceptedHash)
+	chainConfig, genesisErr := core.SetupGenesisBlock(chainDb, config.Genesis, lastAcceptedHash, config.SkipUpgradeCheck)
 	if genesisErr != nil {
 		return nil, genesisErr
 	}
@@ -208,6 +197,8 @@ func New(
 		}
 		cacheConfig = &core.CacheConfig{
 			TrieCleanLimit:                  config.TrieCleanCache,
+			TrieCleanJournal:                config.TrieCleanJournal,
+			TrieCleanRejournal:              config.TrieCleanRejournal,
 			TrieDirtyLimit:                  config.TrieDirtyCache,
 			TrieDirtyCommitTarget:           config.TrieDirtyCommitTarget,
 			Pruning:                         config.Pruning,
@@ -222,6 +213,8 @@ func New(
 			SnapshotVerify:                  config.SnapshotVerify,
 			SkipSnapshotRebuild:             config.SkipSnapshotRebuild,
 			Preimages:                       config.Preimages,
+			AcceptedCacheSize:               config.AcceptedCacheSize,
+			TxLookupLimit:                   config.TxLookupLimit,
 		}
 	)
 
@@ -246,17 +239,22 @@ func New(
 
 	eth.miner = miner.New(eth, &config.Miner, chainConfig, eth.EventMux(), eth.engine, clock)
 
+	allowUnprotectedTxHashes := make(map[common.Hash]struct{})
+	for _, txHash := range config.AllowUnprotectedTxHashes {
+		allowUnprotectedTxHashes[txHash] = struct{}{}
+	}
+
 	eth.APIBackend = &EthAPIBackend{
-		extRPCEnabled:       stack.Config().ExtRPCEnabled(),
-		allowUnprotectedTxs: config.AllowUnprotectedTxs,
-		eth:                 eth,
+		extRPCEnabled:            stack.Config().ExtRPCEnabled(),
+		allowUnprotectedTxs:      config.AllowUnprotectedTxs,
+		allowUnprotectedTxHashes: allowUnprotectedTxHashes,
+		eth:                      eth,
 	}
 	if config.AllowUnprotectedTxs {
 		log.Info("Unprotected transactions allowed")
 	}
 	gpoParams := config.GPO
-	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, gpoParams)
-
+	eth.APIBackend.gpo, err = gasprice.NewOracle(eth.APIBackend, gpoParams)
 	if err != nil {
 		return nil, err
 	}
@@ -284,10 +282,8 @@ func (s *Ethereum) APIs() []rpc.API {
 	apis = append(apis, s.stackRPCs...)
 
 	// Create [filterSystem] with the log cache size set in the config.
-	ethcfg := s.APIBackend.eth.config
 	filterSystem := filters.NewFilterSystem(s.APIBackend, filters.Config{
-		LogCacheSize: ethcfg.FilterLogCacheSize,
-		Timeout:      5 * time.Minute,
+		Timeout: 5 * time.Minute,
 	})
 
 	// Append all the local APIs and return

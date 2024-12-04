@@ -138,11 +138,6 @@ func (s *EthereumAPI) Syncing() (interface{}, error) {
 	return false, nil
 }
 
-// GetChainConfig returns the chain config.
-func (s *EthereumAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
-	return s.b.ChainConfig()
-}
-
 // TxPoolAPI offers and API for the transaction pool. It only operates on data that is non confidential.
 type TxPoolAPI struct {
 	b Backend
@@ -614,6 +609,11 @@ func NewBlockChainAPI(b Backend) *BlockChainAPI {
 // in CL clients.
 func (api *BlockChainAPI) ChainId() *hexutil.Big {
 	return (*hexutil.Big)(api.b.ChainConfig().ChainID)
+}
+
+// GetChainConfig returns the chain config.
+func (api *BlockChainAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
+	return api.b.ChainConfig()
 }
 
 // BlockNumber returns the block number of the chain head.
@@ -1243,9 +1243,6 @@ func RPCMarshalHeader(head *types.Header) map[string]interface{} {
 	if head.BlockGasCost != nil {
 		result["blockGasCost"] = (*hexutil.Big)(head.BlockGasCost)
 	}
-	if head.ExtraStateRoot != (common.Hash{}) {
-		result["extraStateRoot"] = head.ExtraStateRoot
-	}
 
 	return result
 }
@@ -1773,7 +1770,7 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	if err := checkTxFee(tx.GasPrice(), tx.Gas(), b.RPCTxFeeCap()); err != nil {
 		return common.Hash{}, err
 	}
-	if !b.UnprotectedAllowed() && !tx.Protected() {
+	if !b.UnprotectedAllowed(tx) && !tx.Protected() {
 		// Ensure only eip155 signed transactions are submitted if EIP155Required is set.
 		return common.Hash{}, errors.New("only replay-protected (EIP-155) transactions allowed over RPC")
 	}

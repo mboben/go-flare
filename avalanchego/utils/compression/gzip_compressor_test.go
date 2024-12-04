@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package compression
@@ -75,4 +75,25 @@ func TestNewGzipCompressorWithInvalidLimit(t *testing.T) {
 	require := require.New(t)
 	_, err := NewGzipCompressor(math.MaxInt64)
 	require.ErrorIs(err, ErrInvalidMaxSizeGzipCompressor)
+}
+
+func FuzzGzipCompressor(f *testing.F) {
+	f.Fuzz(func(t *testing.T, data []byte) {
+		require := require.New(t)
+
+		if len(data) > 2*units.MiB {
+			t.SkipNow()
+		}
+
+		compressor, err := NewGzipCompressor(2 * units.MiB)
+		require.NoError(err)
+
+		compressed, err := compressor.Compress(data)
+		require.NoError(err)
+
+		decompressed, err := compressor.Decompress(compressed)
+		require.NoError(err)
+
+		require.Equal(data, decompressed)
+	})
 }

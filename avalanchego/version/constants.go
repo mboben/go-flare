@@ -1,20 +1,27 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package version
 
 import (
+	"encoding/json"
 	"time"
+
+	_ "embed"
 
 	"github.com/ava-labs/avalanchego/utils/constants"
 )
+
+// RPCChainVMProtocol should be bumped anytime changes are made which require
+// the plugin vm to upgrade to latest avalanchego release to be compatible.
+const RPCChainVMProtocol uint = 24
 
 // These are globals that describe network upgrades and node versions
 var (
 	Current = &Semantic{
 		Major: 1,
 		Minor: 9,
-		Patch: 1,
+		Patch: 16,
 	}
 	CurrentApp = &Application{
 		Major: Current.Major,
@@ -66,6 +73,13 @@ var (
 		Minor: 0,
 		Patch: 0,
 	}
+
+	//go:embed compatibility.json
+	rpcChainVMProtocolCompatibilityBytes []byte
+	// RPCChainVMProtocolCompatibility maps RPCChainVMProtocol versions to the
+	// set of avalanchego versions that supported that version. This is not used
+	// by avalanchego, but is useful for downstream libraries.
+	RPCChainVMProtocolCompatibility map[uint][]*Semantic
 
 	ApricotPhase3Times = map[uint32]time.Time{
 		constants.MainnetID:    time.Date(2021, time.August, 24, 14, 0, 0, 0, time.UTC),
@@ -129,8 +143,8 @@ var (
 	}
 	BanffDefaultTime = time.Date(2020, time.December, 5, 5, 0, 0, 0, time.UTC)
 
-	// FIXME: update this before release
-	XChainMigrationTimes = map[uint32]time.Time{
+	// TODO: update this before release
+	CortinaTimes = map[uint32]time.Time{
 		constants.MainnetID:    time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 		constants.FlareID:      time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 		constants.CostwoID:     time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
@@ -140,8 +154,29 @@ var (
 		constants.SongbirdID:   time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 		constants.LocalID:      time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 	}
-	XChainMigrationDefaultTime = time.Date(2020, time.December, 5, 5, 0, 0, 0, time.UTC)
+	CortinaDefaultTime = time.Date(2020, time.December, 5, 5, 0, 0, 0, time.UTC)
 )
+
+func init() {
+	var parsedRPCChainVMCompatibility map[uint][]string
+	err := json.Unmarshal(rpcChainVMProtocolCompatibilityBytes, &parsedRPCChainVMCompatibility)
+	if err != nil {
+		panic(err)
+	}
+
+	RPCChainVMProtocolCompatibility = make(map[uint][]*Semantic)
+	for rpcChainVMProtocol, versionStrings := range parsedRPCChainVMCompatibility {
+		versions := make([]*Semantic, len(versionStrings))
+		for i, versionString := range versionStrings {
+			version, err := Parse(versionString)
+			if err != nil {
+				panic(err)
+			}
+			versions[i] = version
+		}
+		RPCChainVMProtocolCompatibility[rpcChainVMProtocol] = versions
+	}
+}
 
 func GetApricotPhase3Time(networkID uint32) time.Time {
 	if upgradeTime, exists := ApricotPhase3Times[networkID]; exists {
@@ -185,11 +220,11 @@ func GetBanffTime(networkID uint32) time.Time {
 	return BanffDefaultTime
 }
 
-func GetXChainMigrationTime(networkID uint32) time.Time {
-	if upgradeTime, exists := XChainMigrationTimes[networkID]; exists {
+func GetCortinaTime(networkID uint32) time.Time {
+	if upgradeTime, exists := CortinaTimes[networkID]; exists {
 		return upgradeTime
 	}
-	return XChainMigrationDefaultTime
+	return CortinaDefaultTime
 }
 
 func GetCompatibility(networkID uint32) Compatibility {

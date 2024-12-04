@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package executor
@@ -11,8 +11,9 @@ import (
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/constants"
-	"github.com/ava-labs/avalanchego/utils/crypto"
+	"github.com/ava-labs/avalanchego/utils/crypto/secp256k1"
 	"github.com/ava-labs/avalanchego/utils/math"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/platformvm/reward"
 	"github.com/ava-labs/avalanchego/vms/platformvm/state"
@@ -23,7 +24,7 @@ import (
 
 func TestRewardValidatorTxExecuteOnCommit(t *testing.T) {
 	require := require.New(t)
-	env := newEnvironment()
+	env := newEnvironment( /*postBanff*/ false)
 	defer func() {
 		require.NoError(shutdownEnvironment(env))
 	}()
@@ -45,14 +46,10 @@ func TestRewardValidatorTxExecuteOnCommit(t *testing.T) {
 	require.NoError(err)
 
 	onCommitState, err := state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	onAbortState, err := state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	txExecutor := ProposalTxExecutor{
 		OnCommitState: onCommitState,
@@ -70,14 +67,10 @@ func TestRewardValidatorTxExecuteOnCommit(t *testing.T) {
 	require.NoError(err)
 
 	onCommitState, err = state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	onAbortState, err = state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	txExecutor = ProposalTxExecutor{
 		OnCommitState: onCommitState,
@@ -92,14 +85,10 @@ func TestRewardValidatorTxExecuteOnCommit(t *testing.T) {
 	require.NoError(err)
 
 	onCommitState, err = state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	onAbortState, err = state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	txExecutor = ProposalTxExecutor{
 		OnCommitState: onCommitState,
@@ -135,7 +124,7 @@ func TestRewardValidatorTxExecuteOnCommit(t *testing.T) {
 
 func TestRewardValidatorTxExecuteOnAbort(t *testing.T) {
 	require := require.New(t)
-	env := newEnvironment()
+	env := newEnvironment( /*postBanff*/ false)
 	defer func() {
 		require.NoError(shutdownEnvironment(env))
 	}()
@@ -157,14 +146,10 @@ func TestRewardValidatorTxExecuteOnAbort(t *testing.T) {
 	require.NoError(err)
 
 	onCommitState, err := state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	onAbortState, err := state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	txExecutor := ProposalTxExecutor{
 		OnCommitState: onCommitState,
@@ -194,14 +179,10 @@ func TestRewardValidatorTxExecuteOnAbort(t *testing.T) {
 	require.NoError(err)
 
 	onCommitState, err = state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	onAbortState, err = state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	txExecutor = ProposalTxExecutor{
 		OnCommitState: onCommitState,
@@ -237,11 +218,9 @@ func TestRewardValidatorTxExecuteOnAbort(t *testing.T) {
 
 func TestRewardDelegatorTxExecuteOnAbort(t *testing.T) {
 	require := require.New(t)
-	env := newEnvironment()
+	env := newEnvironment( /*postBanff*/ false)
 	defer func() {
-		if err := shutdownEnvironment(env); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(shutdownEnvironment(env))
 	}()
 	dummyHeight := uint64(1)
 
@@ -262,7 +241,7 @@ func TestRewardDelegatorTxExecuteOnAbort(t *testing.T) {
 		vdrNodeID,        // node ID
 		vdrRewardAddress, // reward address
 		reward.PercentDenominator/4,
-		[]*crypto.PrivateKeySECP256K1R{preFundedKeys[0]},
+		[]*secp256k1.PrivateKey{preFundedKeys[0]},
 		ids.ShortEmpty,
 	)
 	require.NoError(err)
@@ -275,22 +254,24 @@ func TestRewardDelegatorTxExecuteOnAbort(t *testing.T) {
 		delEndTime,
 		vdrNodeID,
 		delRewardAddress,
-		[]*crypto.PrivateKeySECP256K1R{preFundedKeys[0]},
+		[]*secp256k1.PrivateKey{preFundedKeys[0]},
 		ids.ShortEmpty,
 	)
 	require.NoError(err)
 
-	vdrStaker := state.NewCurrentStaker(
+	vdrStaker, err := state.NewCurrentStaker(
 		vdrTx.ID(),
 		vdrTx.Unsigned.(*txs.AddValidatorTx),
 		0,
 	)
+	require.NoError(err)
 
-	delStaker := state.NewCurrentStaker(
+	delStaker, err := state.NewCurrentStaker(
 		delTx.ID(),
 		delTx.Unsigned.(*txs.AddDelegatorTx),
 		1000000,
 	)
+	require.NoError(err)
 
 	env.state.PutCurrentValidator(vdrStaker)
 	env.state.AddTx(vdrTx, status.Committed)
@@ -304,14 +285,10 @@ func TestRewardDelegatorTxExecuteOnAbort(t *testing.T) {
 	require.NoError(err)
 
 	onCommitState, err := state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	onAbortState, err := state.NewDiff(lastAcceptedID, env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	txExecutor := ProposalTxExecutor{
 		OnCommitState: onCommitState,
@@ -322,9 +299,9 @@ func TestRewardDelegatorTxExecuteOnAbort(t *testing.T) {
 	err = tx.Unsigned.Visit(&txExecutor)
 	require.NoError(err)
 
-	vdrDestSet := ids.ShortSet{}
+	vdrDestSet := set.Set[ids.ShortID]{}
 	vdrDestSet.Add(vdrRewardAddress)
-	delDestSet := ids.ShortSet{}
+	delDestSet := set.Set[ids.ShortID]{}
 	delDestSet.Add(delRewardAddress)
 
 	expectedReward := uint64(1000000)
@@ -341,13 +318,13 @@ func TestRewardDelegatorTxExecuteOnAbort(t *testing.T) {
 	// If tx is aborted, delegator and delegatee shouldn't get reward
 	newVdrBalance, err := avax.GetBalance(env.state, vdrDestSet)
 	require.NoError(err)
-	vdrReward, err := math.Sub64(newVdrBalance, oldVdrBalance)
+	vdrReward, err := math.Sub(newVdrBalance, oldVdrBalance)
 	require.NoError(err)
 	require.Zero(vdrReward, "expected delegatee balance not to increase")
 
 	newDelBalance, err := avax.GetBalance(env.state, delDestSet)
 	require.NoError(err)
-	delReward, err := math.Sub64(newDelBalance, oldDelBalance)
+	delReward, err := math.Sub(newDelBalance, oldDelBalance)
 	require.NoError(err)
 	require.Zero(delReward, "expected delegator balance not to increase")
 

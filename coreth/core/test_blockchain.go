@@ -19,6 +19,17 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
+var TestCallbacks = dummy.ConsensusCallbacks{
+	OnExtraStateChange: func(block *types.Block, sdb *state.StateDB) (*big.Int, *big.Int, error) {
+		sdb.SetBalanceMultiCoin(common.HexToAddress("0xdeadbeef"), common.HexToHash("0xdeadbeef"), big.NewInt(block.Number().Int64()))
+		return nil, nil, nil
+	},
+	OnFinalizeAndAssemble: func(header *types.Header, sdb *state.StateDB, txs []*types.Transaction) ([]byte, *big.Int, *big.Int, error) {
+		sdb.SetBalanceMultiCoin(common.HexToAddress("0xdeadbeef"), common.HexToHash("0xdeadbeef"), big.NewInt(header.Number.Int64()))
+		return nil, nil, nil, nil
+	},
+}
+
 type ChainTest struct {
 	Name     string
 	testFunc func(
@@ -994,6 +1005,7 @@ func TestReorgReInsert(t *testing.T, create func(db ethdb.Database, chainConfig 
 	checkBlockChainState(t, blockchain, gspec, chainDB, create, checkState)
 }
 
+//nolint:goimports
 // Insert two different chains that result in the identical state root.
 // Once we accept one of the chains, we insert and accept A3 on top of the shared
 // state root
@@ -1140,6 +1152,7 @@ func TestAcceptBlockIdenticalStateRoot(t *testing.T, create func(db ethdb.Databa
 	checkBlockChainState(t, blockchain, gspec, chainDB, create, checkState)
 }
 
+//nolint:goimports
 // Insert two different chains that result in the identical state root.
 // Once we insert both of the chains, we restart, insert both the chains again,
 // and then we accept one of the chains and accept A3 on top of the shared state
@@ -1397,16 +1410,7 @@ func TestInsertChainInvalidBlockFee(t *testing.T, create func(db ethdb.Database,
 	signer := types.LatestSigner(params.TestChainConfig)
 	// Generate chain of blocks using [genDB] instead of [chainDB] to avoid writing
 	// to the BlockChain's database while generating blocks.
-	eng := dummy.NewComplexETHFaker(&dummy.ConsensusCallbacks{
-		OnExtraStateChange: func(block *types.Block, sdb *state.StateDB) (*big.Int, *big.Int, error) {
-			sdb.SetBalanceMultiCoin(common.HexToAddress("0xdeadbeef"), common.HexToHash("0xdeadbeef"), big.NewInt(block.Number().Int64()))
-			return nil, nil, nil
-		},
-		OnFinalizeAndAssemble: func(header *types.Header, sdb *state.StateDB, txs []*types.Transaction) ([]byte, *big.Int, *big.Int, error) {
-			sdb.SetBalanceMultiCoin(common.HexToAddress("0xdeadbeef"), common.HexToHash("0xdeadbeef"), big.NewInt(header.Number.Int64()))
-			return nil, nil, nil, nil
-		},
-	})
+	eng := dummy.NewComplexETHFaker(&TestCallbacks)
 	chain, _, err := GenerateChain(params.TestChainConfig, genesis, eng, genDB, 3, 0, func(i int, gen *BlockGen) {
 		tx := types.NewTx(&types.DynamicFeeTx{
 			ChainID:   params.TestChainConfig.ChainID,

@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package health
 
 import (
+	"context"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -13,7 +14,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 )
 
-var _ Health = &health{}
+var _ Health = (*health)(nil)
 
 // Health defines the full health service interface for registering, reporting
 // and refreshing health checks.
@@ -21,7 +22,7 @@ type Health interface {
 	Registerer
 	Reporter
 
-	Start(freq time.Duration)
+	Start(ctx context.Context, freq time.Duration)
 	Stop()
 }
 
@@ -108,10 +109,10 @@ func (h *health) Liveness() (map[string]Result, bool) {
 	return results, healthy
 }
 
-func (h *health) Start(freq time.Duration) {
-	h.readiness.Start(freq)
-	h.health.Start(freq)
-	h.liveness.Start(freq)
+func (h *health) Start(ctx context.Context, freq time.Duration) {
+	h.readiness.Start(ctx, freq)
+	h.health.Start(ctx, freq)
+	h.liveness.Start(ctx, freq)
 }
 
 func (h *health) Stop() {

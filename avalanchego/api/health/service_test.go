@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2023, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package health
 
 import (
+	"context"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -16,7 +17,7 @@ import (
 func TestServiceResponses(t *testing.T) {
 	require := require.New(t)
 
-	check := CheckerFunc(func() (interface{}, error) {
+	check := CheckerFunc(func(context.Context) (interface{}, error) {
 		return "", nil
 	})
 
@@ -36,7 +37,7 @@ func TestServiceResponses(t *testing.T) {
 	require.NoError(err)
 
 	{
-		reply := APIHealthReply{}
+		reply := APIReply{}
 		err = s.Readiness(nil, nil, &reply)
 		require.NoError(err)
 
@@ -47,7 +48,7 @@ func TestServiceResponses(t *testing.T) {
 	}
 
 	{
-		reply := APIHealthReply{}
+		reply := APIReply{}
 		err = s.Health(nil, nil, &reply)
 		require.NoError(err)
 
@@ -58,7 +59,7 @@ func TestServiceResponses(t *testing.T) {
 	}
 
 	{
-		reply := APIHealthReply{}
+		reply := APIReply{}
 		err = s.Liveness(nil, nil, &reply)
 		require.NoError(err)
 
@@ -68,7 +69,7 @@ func TestServiceResponses(t *testing.T) {
 		require.False(reply.Healthy)
 	}
 
-	h.Start(checkFreq)
+	h.Start(context.Background(), checkFreq)
 	defer h.Stop()
 
 	awaitReadiness(h)
@@ -76,7 +77,7 @@ func TestServiceResponses(t *testing.T) {
 	awaitLiveness(h, true)
 
 	{
-		reply := APIHealthReply{}
+		reply := APIReply{}
 		err = s.Readiness(nil, nil, &reply)
 		require.NoError(err)
 
@@ -88,7 +89,7 @@ func TestServiceResponses(t *testing.T) {
 	}
 
 	{
-		reply := APIHealthReply{}
+		reply := APIReply{}
 		err = s.Health(nil, nil, &reply)
 		require.NoError(err)
 
@@ -100,7 +101,7 @@ func TestServiceResponses(t *testing.T) {
 	}
 
 	{
-		reply := APIHealthReply{}
+		reply := APIReply{}
 		err = s.Liveness(nil, nil, &reply)
 		require.NoError(err)
 
