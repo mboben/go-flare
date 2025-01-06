@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -313,4 +314,36 @@ func validateRequest(r *http.Request) (int, error) {
 	// Invalid content-type
 	err := fmt.Errorf("invalid content type, only %s is supported", contentType)
 	return http.StatusUnsupportedMediaType, err
+}
+
+// ContextRequestTimeout returns the request timeout derived from the given context.
+func ContextRequestTimeout(ctx context.Context) (time.Duration, bool) {
+	timeout := time.Duration(math.MaxInt64)
+	hasTimeout := false
+	setTimeout := func(d time.Duration) {
+		if d < timeout {
+			timeout = d
+			hasTimeout = true
+		}
+	}
+
+	if deadline, ok := ctx.Deadline(); ok {
+		setTimeout(time.Until(deadline))
+	}
+
+	// If the context is an HTTP request context, use the server's WriteTimeout.
+	httpSrv, ok := ctx.Value(http.ServerContextKey).(*http.Server)
+	if ok && httpSrv.WriteTimeout > 0 {
+		wt := httpSrv.WriteTimeout
+		// When a write timeout is configured, we need to send the response message before
+		// the HTTP server cuts connection. So our internal timeout must be earlier than
+		// the server's true timeout.
+		//
+		// Note: Timeouts are sanitized to be a minimum of 1 second.
+		// Also see issue: https://github.com/golang/go/issues/47229
+		wt -= 100 * time.Millisecond
+		setTimeout(wt)
+	}
+
+	return timeout, hasTimeout
 }
