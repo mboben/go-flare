@@ -19,30 +19,27 @@ var (
 	}
 
 	ApricotPhase3Times = map[uint32]time.Time{
-		constants.MainnetID:    time.Date(2021, time.August, 24, 14, 0, 0, 0, time.UTC),
-		constants.FlareID:      time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
-		constants.CostwoID:     time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
-		constants.LocalFlareID: time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
-		constants.CostonID:     time.Date(2022, time.February, 25, 14, 0, 0, 0, time.UTC),
-		constants.SongbirdID:   time.Date(2022, time.March, 7, 14, 0, 0, 0, time.UTC),
+		constants.MainnetID:  time.Date(2021, time.August, 24, 14, 0, 0, 0, time.UTC),
+		constants.FlareID:    time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
+		constants.CostwoID:   time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
+		constants.CostonID:   time.Date(2022, time.February, 25, 14, 0, 0, 0, time.UTC),
+		constants.SongbirdID: time.Date(2022, time.March, 7, 14, 0, 0, 0, time.UTC),
 	}
 
 	ApricotPhase4Times = map[uint32]time.Time{
-		constants.MainnetID:    time.Date(2021, time.September, 22, 21, 0, 0, 0, time.UTC),
-		constants.FlareID:      time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
-		constants.CostwoID:     time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
-		constants.LocalFlareID: time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
-		constants.CostonID:     time.Date(2022, time.February, 25, 15, 0, 0, 0, time.UTC),
-		constants.SongbirdID:   time.Date(2022, time.March, 7, 15, 0, 0, 0, time.UTC),
+		constants.MainnetID:  time.Date(2021, time.September, 22, 21, 0, 0, 0, time.UTC),
+		constants.FlareID:    time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
+		constants.CostwoID:   time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
+		constants.CostonID:   time.Date(2022, time.February, 25, 15, 0, 0, 0, time.UTC),
+		constants.SongbirdID: time.Date(2022, time.March, 7, 15, 0, 0, 0, time.UTC),
 	}
 
 	ApricotPhase5Times = map[uint32]time.Time{
-		constants.MainnetID:    time.Date(2021, time.December, 2, 18, 0, 0, 0, time.UTC),
-		constants.FlareID:      time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
-		constants.CostwoID:     time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
-		constants.LocalFlareID: time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
-		constants.CostonID:     time.Date(2022, time.February, 25, 16, 0, 0, 0, time.UTC),
-		constants.SongbirdID:   time.Date(2022, time.March, 7, 16, 0, 0, 0, time.UTC),
+		constants.MainnetID:  time.Date(2021, time.December, 2, 18, 0, 0, 0, time.UTC),
+		constants.FlareID:    time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
+		constants.CostwoID:   time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC),
+		constants.CostonID:   time.Date(2022, time.February, 25, 16, 0, 0, 0, time.UTC),
+		constants.SongbirdID: time.Date(2022, time.March, 7, 16, 0, 0, 0, time.UTC),
 	}
 
 	SongbirdTransitionTimes = map[uint32]time.Time{
@@ -51,53 +48,43 @@ var (
 	}
 
 	ApricotPhasePre6Times = map[uint32]time.Time{
-		constants.MainnetID:    time.Date(2022, time.September, 5, 1, 30, 0, 0, time.UTC),
-		constants.FlareID:      time.Date(2024, time.December, 17, 12, 0, 0, 0, time.UTC),
-		constants.CostwoID:     time.Date(2024, time.November, 26, 12, 0, 0, 0, time.UTC),
-		constants.LocalFlareID: time.Date(2024, time.November, 5, 12, 0, 0, 0, time.UTC),
-		constants.CostonID:     time.Date(2025, time.January, 7, 12, 0, 0, 0, time.UTC),
-		constants.SongbirdID:   time.Date(2025, time.January, 28, 12, 0, 0, 0, time.UTC),
-		constants.LocalID:      time.Date(2024, time.November, 5, 12, 0, 0, 0, time.UTC),
+		constants.MainnetID:  time.Date(2022, time.September, 5, 1, 30, 0, 0, time.UTC),
+		constants.FlareID:    time.Date(2024, time.December, 17, 12, 0, 0, 0, time.UTC),
+		constants.CostwoID:   time.Date(2024, time.November, 26, 12, 0, 0, 0, time.UTC),
+		constants.CostonID:   time.Date(2025, time.January, 7, 12, 0, 0, 0, time.UTC),
+		constants.SongbirdID: time.Date(2025, time.January, 28, 12, 0, 0, 0, time.UTC),
 	}
 
 	ApricotPhase6Times = map[uint32]time.Time{
-		constants.MainnetID:    time.Date(2022, time.September, 6, 20, 0, 0, 0, time.UTC),
-		constants.FlareID:      time.Date(2024, time.December, 17, 13, 0, 0, 0, time.UTC),
-		constants.CostwoID:     time.Date(2024, time.November, 26, 13, 0, 0, 0, time.UTC),
-		constants.LocalFlareID: time.Date(2024, time.November, 5, 13, 0, 0, 0, time.UTC),
-		constants.CostonID:     time.Date(2025, time.January, 7, 13, 0, 0, 0, time.UTC),
-		constants.SongbirdID:   time.Date(2025, time.January, 28, 13, 0, 0, 0, time.UTC),
-		constants.LocalID:      time.Date(2024, time.November, 5, 13, 0, 0, 0, time.UTC),
+		constants.MainnetID:  time.Date(2022, time.September, 6, 20, 0, 0, 0, time.UTC),
+		constants.FlareID:    time.Date(2024, time.December, 17, 13, 0, 0, 0, time.UTC),
+		constants.CostwoID:   time.Date(2024, time.November, 26, 13, 0, 0, 0, time.UTC),
+		constants.CostonID:   time.Date(2025, time.January, 7, 13, 0, 0, 0, time.UTC),
+		constants.SongbirdID: time.Date(2025, time.January, 28, 13, 0, 0, 0, time.UTC),
 	}
 
 	ApricotPhasePost6Times = map[uint32]time.Time{
-		constants.MainnetID:    time.Date(2022, time.September, 7, 3, 0, 0, 0, time.UTC),
-		constants.FlareID:      time.Date(2024, time.December, 17, 14, 0, 0, 0, time.UTC),
-		constants.CostwoID:     time.Date(2024, time.November, 26, 14, 0, 0, 0, time.UTC),
-		constants.LocalFlareID: time.Date(2024, time.November, 5, 14, 0, 0, 0, time.UTC),
-		constants.CostonID:     time.Date(2025, time.January, 7, 14, 0, 0, 0, time.UTC),
-		constants.SongbirdID:   time.Date(2025, time.January, 28, 14, 0, 0, 0, time.UTC),
-		constants.LocalID:      time.Date(2024, time.November, 5, 14, 0, 0, 0, time.UTC),
+		constants.MainnetID:  time.Date(2022, time.September, 7, 3, 0, 0, 0, time.UTC),
+		constants.FlareID:    time.Date(2024, time.December, 17, 14, 0, 0, 0, time.UTC),
+		constants.CostwoID:   time.Date(2024, time.November, 26, 14, 0, 0, 0, time.UTC),
+		constants.CostonID:   time.Date(2025, time.January, 7, 14, 0, 0, 0, time.UTC),
+		constants.SongbirdID: time.Date(2025, time.January, 28, 14, 0, 0, 0, time.UTC),
 	}
 
 	BanffTimes = map[uint32]time.Time{
-		constants.MainnetID:    time.Date(2022, time.October, 18, 16, 0, 0, 0, time.UTC),
-		constants.FlareID:      time.Date(2024, time.December, 17, 15, 0, 0, 0, time.UTC),
-		constants.CostwoID:     time.Date(2024, time.November, 26, 15, 0, 0, 0, time.UTC),
-		constants.LocalFlareID: time.Date(2024, time.May, 29, 9, 15, 0, 0, time.UTC),
-		constants.CostonID:     time.Date(2025, time.January, 7, 15, 0, 0, 0, time.UTC),
-		constants.SongbirdID:   time.Date(2025, time.January, 28, 15, 0, 0, 0, time.UTC),
-		constants.LocalID:      time.Date(2024, time.November, 5, 15, 0, 0, 0, time.UTC),
+		constants.MainnetID:  time.Date(2022, time.October, 18, 16, 0, 0, 0, time.UTC),
+		constants.FlareID:    time.Date(2024, time.December, 17, 15, 0, 0, 0, time.UTC),
+		constants.CostwoID:   time.Date(2024, time.November, 26, 15, 0, 0, 0, time.UTC),
+		constants.CostonID:   time.Date(2025, time.January, 7, 15, 0, 0, 0, time.UTC),
+		constants.SongbirdID: time.Date(2025, time.January, 28, 15, 0, 0, 0, time.UTC),
 	}
 
 	CortinaTimes = map[uint32]time.Time{
-		constants.MainnetID:    time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
-		constants.FlareID:      time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
-		constants.CostwoID:     time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
-		constants.LocalFlareID: time.Date(2025, time.January, 8, 13, 30, 0, 0, time.UTC),
-		constants.CostonID:     time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
-		constants.SongbirdID:   time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
-		constants.LocalID:      time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
+		constants.MainnetID:  time.Date(2023, time.April, 25, 15, 0, 0, 0, time.UTC),
+		constants.FlareID:    time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
+		constants.CostwoID:   time.Date(2025, time.April, 8, 12, 0, 0, 0, time.UTC),
+		constants.CostonID:   time.Date(2025, time.March, 27, 13, 0, 0, 0, time.UTC),
+		constants.SongbirdID: time.Date(10000, time.December, 1, 0, 0, 0, 0, time.UTC),
 	}
 
 	DurangoTimes = map[uint32]time.Time{
