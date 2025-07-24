@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/big"
 	"testing"
 	"time"
 
@@ -1404,9 +1405,9 @@ func TestBootstrapPartiallyAccepted(t *testing.T) {
 	}
 
 	peers := tracker.NewPeers()
-	totalWeight, err := beacons.TotalWeight(ctx.SubnetID)
-	require.NoError(err)
-	startup := tracker.NewStartup(peers, (totalWeight+1)/2)
+	totalWeight := beacons.TotalWeight(ctx.SubnetID)
+	startupWeight := new(big.Int).Div(new(big.Int).Add(totalWeight, big.NewInt(1)), big.NewInt(2))
+	startup := tracker.NewStartup(peers, startupWeight)
 	beacons.RegisterCallbackListener(ctx.SubnetID, startup)
 
 	// The engine handles consensus

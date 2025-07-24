@@ -7,8 +7,9 @@ package sampler
 // Note that the behavior is to sample the weight without replacement, not the
 // indices. So duplicate indices can be returned.
 type WeightedWithoutReplacement interface {
-	Initialize(weights []uint64) error
+	InitializeWithAdjustedWeights(weights []uint64) error
 	Sample(count int) ([]int, error)
+	TotalAdjustedWeight() uint64
 }
 
 // NewWeightedWithoutReplacement returns a new sampler

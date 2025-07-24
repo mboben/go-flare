@@ -29,34 +29,6 @@ func TestSetAddDuplicate(t *testing.T) {
 	require.ErrorIs(err, errDuplicateValidator)
 }
 
-func TestSetAddOverflow(t *testing.T) {
-	require := require.New(t)
-
-	s := newSet()
-	require.NoError(s.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1))
-
-	require.NoError(s.Add(ids.GenerateTestNodeID(), nil, ids.Empty, math.MaxUint64))
-
-	_, err := s.TotalWeight()
-	require.ErrorIs(err, errTotalWeightNotUint64)
-}
-
-func TestSetAddWeightOverflow(t *testing.T) {
-	require := require.New(t)
-
-	s := newSet()
-
-	require.NoError(s.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1))
-
-	nodeID := ids.GenerateTestNodeID()
-	require.NoError(s.Add(nodeID, nil, ids.Empty, 1))
-
-	require.NoError(s.AddWeight(nodeID, math.MaxUint64-1))
-
-	_, err := s.TotalWeight()
-	require.ErrorIs(err, errTotalWeightNotUint64)
-}
-
 func TestSetGetWeight(t *testing.T) {
 	require := require.New(t)
 
@@ -90,9 +62,8 @@ func TestSetSubsetWeight(t *testing.T) {
 	require.NoError(s.Add(nodeID2, nil, ids.Empty, weight2))
 
 	expectedWeight := weight0 + weight1
-	subsetWeight, err := s.SubsetWeight(subset)
-	require.NoError(err)
-	require.Equal(expectedWeight, subsetWeight)
+	subsetWeight := s.SubsetWeight(subset)
+	require.Equal(expectedWeight, subsetWeight.Uint64())
 }
 
 func TestSetRemoveWeightMissingValidator(t *testing.T) {
@@ -119,8 +90,7 @@ func TestSetRemoveWeightUnderflow(t *testing.T) {
 	err := s.RemoveWeight(nodeID, 2)
 	require.ErrorIs(err, safemath.ErrUnderflow)
 
-	totalWeight, err := s.TotalWeight()
-	require.NoError(err)
+	totalWeight := s.TotalWeight().Uint64()
 	require.Equal(uint64(2), totalWeight)
 }
 
@@ -283,8 +253,7 @@ func TestSetWeight(t *testing.T) {
 
 	require.NoError(s.Add(vdr1, nil, ids.Empty, weight1))
 
-	setWeight, err := s.TotalWeight()
-	require.NoError(err)
+	setWeight := s.TotalWeight().Uint64()
 	expectedWeight := weight0 + weight1
 	require.Equal(expectedWeight, setWeight)
 }

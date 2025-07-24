@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"sync"
@@ -775,15 +776,13 @@ func (m *manager) createAvalancheChain(
 		appSender:    snowmanMessageSender,
 	}
 
-	bootstrapWeight, err := vdrs.TotalWeight(ctx.SubnetID)
-	if err != nil {
-		return nil, fmt.Errorf("error while fetching weight for subnet %s: %w", ctx.SubnetID, err)
-	}
+	bootstrapWeight := vdrs.TotalWeight(ctx.SubnetID)
 
 	consensusParams := sb.Config().ConsensusParameters
 	sampleK := consensusParams.K
-	if uint64(sampleK) > bootstrapWeight {
-		sampleK = int(bootstrapWeight)
+
+	if big.NewInt(int64(sampleK)).Cmp(bootstrapWeight) > 0 {
+		sampleK = int(bootstrapWeight.Int64())
 	}
 
 	connectedValidators, err := tracker.NewMeteredPeers("", ctx.Registerer)
@@ -809,7 +808,8 @@ func (m *manager) createAvalancheChain(
 	}
 
 	connectedBeacons := tracker.NewPeers()
-	startupTracker := tracker.NewStartup(connectedBeacons, (3*bootstrapWeight+3)/4)
+	startupWeight := new(big.Int).Div(new(big.Int).Add(new(big.Int).Mul(big.NewInt(3), bootstrapWeight), big.NewInt(3)), big.NewInt(4))
+	startupTracker := tracker.NewStartup(connectedBeacons, startupWeight)
 	vdrs.RegisterCallbackListener(ctx.SubnetID, startupTracker)
 
 	snowGetHandler, err := snowgetter.New(
@@ -1121,15 +1121,12 @@ func (m *manager) createSnowmanChain(
 		return nil, err
 	}
 
-	bootstrapWeight, err := beacons.TotalWeight(ctx.SubnetID)
-	if err != nil {
-		return nil, fmt.Errorf("error while fetching weight for subnet %s: %w", ctx.SubnetID, err)
-	}
-
+	bootstrapWeight := beacons.TotalWeight(ctx.SubnetID)
 	consensusParams := sb.Config().ConsensusParameters
 	sampleK := consensusParams.K
-	if uint64(sampleK) > bootstrapWeight {
-		sampleK = int(bootstrapWeight)
+
+	if big.NewInt(int64(sampleK)).Cmp(bootstrapWeight) > 0 {
+		sampleK = int(bootstrapWeight.Int64())
 	}
 
 	connectedValidators, err := tracker.NewMeteredPeers("", ctx.Registerer)
@@ -1155,7 +1152,8 @@ func (m *manager) createSnowmanChain(
 	}
 
 	connectedBeacons := tracker.NewPeers()
-	startupTracker := tracker.NewStartup(connectedBeacons, (3*bootstrapWeight+3)/4)
+	startupWeight := new(big.Int).Div(new(big.Int).Add(new(big.Int).Mul(big.NewInt(3), bootstrapWeight), big.NewInt(3)), big.NewInt(4))
+	startupTracker := tracker.NewStartup(connectedBeacons, startupWeight)
 	beacons.RegisterCallbackListener(ctx.SubnetID, startupTracker)
 
 	snowGetHandler, err := snowgetter.New(
@@ -1233,7 +1231,7 @@ func (m *manager) createSnowmanChain(
 		messageSender,
 		beacons,
 		sampleK,
-		bootstrapWeight/2+1, // must be > 50%
+		new(big.Int).Add(new(big.Int).Div(bootstrapWeight, big.NewInt(2)), big.NewInt(1)), // must be > 50%
 		m.StateSyncBeacons,
 		vm,
 	)

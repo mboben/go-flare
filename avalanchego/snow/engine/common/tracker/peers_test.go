@@ -20,36 +20,36 @@ func TestPeers(t *testing.T) {
 
 	p := NewPeers()
 
-	require.Zero(p.TotalWeight())
-	require.Zero(p.ConnectedWeight())
+	require.Zero(p.TotalWeight().Uint64())
+	require.Zero(p.ConnectedWeight().Uint64())
 	require.Empty(p.PreferredPeers())
 
 	p.OnValidatorAdded(nodeID, nil, ids.Empty, 5)
-	require.Zero(p.ConnectedWeight())
-	require.Equal(uint64(5), p.TotalWeight())
+	require.Zero(p.ConnectedWeight().Uint64())
+	require.Equal(uint64(5), p.TotalWeight().Uint64())
 	require.Empty(p.PreferredPeers())
 
 	require.NoError(p.Connected(context.Background(), nodeID, version.CurrentApp))
-	require.Equal(uint64(5), p.ConnectedWeight())
+	require.Equal(uint64(5), p.ConnectedWeight().Uint64())
 	require.Contains(p.PreferredPeers(), nodeID)
 
 	p.OnValidatorWeightChanged(nodeID, 5, 10)
-	require.Equal(uint64(10), p.ConnectedWeight())
-	require.Equal(uint64(10), p.TotalWeight())
+	require.Equal(uint64(10), p.ConnectedWeight().Uint64())
+	require.Equal(uint64(10), p.TotalWeight().Uint64())
 	require.Contains(p.PreferredPeers(), nodeID)
 
 	p.OnValidatorRemoved(nodeID, 10)
-	require.Zero(p.ConnectedWeight())
-	require.Zero(p.TotalWeight())
+	require.Zero(p.ConnectedWeight().Uint64())
+	require.Zero(p.TotalWeight().Uint64())
 	require.Contains(p.PreferredPeers(), nodeID)
 
 	p.OnValidatorAdded(nodeID, nil, ids.Empty, 5)
-	require.Equal(uint64(5), p.ConnectedWeight())
-	require.Equal(uint64(5), p.TotalWeight())
+	require.Equal(uint64(5), p.ConnectedWeight().Uint64())
+	require.Equal(uint64(5), p.TotalWeight().Uint64())
 	require.Contains(p.PreferredPeers(), nodeID)
 
 	require.NoError(p.Disconnected(context.Background(), nodeID))
-	require.Zero(p.ConnectedWeight())
-	require.Equal(uint64(5), p.TotalWeight())
+	require.Zero(p.ConnectedWeight().Uint64())
+	require.Equal(uint64(5), p.TotalWeight().Uint64())
 	require.Empty(p.PreferredPeers())
 }

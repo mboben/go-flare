@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"math/big"
 	"net/http"
 	"os"
 	"strings"
@@ -2586,9 +2587,9 @@ type GetTotalStakeArgs struct {
 // GetTotalStakeReply is the response from calling GetTotalStake.
 type GetTotalStakeReply struct {
 	// Deprecated: Use Weight instead.
-	Stake avajson.Uint64 `json:"stake"`
+	Stake *big.Int `json:"stake"`
 
-	Weight avajson.Uint64 `json:"weight"`
+	Weight *big.Int `json:"weight"`
 }
 
 // GetTotalStake returns the total amount staked on the Primary Network
@@ -2598,11 +2599,8 @@ func (s *Service) GetTotalStake(_ *http.Request, args *GetTotalStakeArgs, reply 
 		zap.String("method", "getTotalStake"),
 	)
 
-	totalWeight, err := s.vm.Validators.TotalWeight(args.SubnetID)
-	if err != nil {
-		return fmt.Errorf("couldn't get total weight: %w", err)
-	}
-	weight := avajson.Uint64(totalWeight)
+	totalWeight := s.vm.Validators.TotalWeight(args.SubnetID)
+	weight := totalWeight
 	reply.Weight = weight
 	reply.Stake = weight
 	return nil

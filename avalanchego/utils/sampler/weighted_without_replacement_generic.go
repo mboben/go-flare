@@ -4,25 +4,40 @@
 package sampler
 
 import (
-	safemath "github.com/ava-labs/avalanchego/utils/math"
+	"math"
+	"math/big"
 )
 
 type weightedWithoutReplacementGeneric struct {
-	u Uniform
-	w Weighted
+	u           Uniform
+	w           Weighted
+	totalWeight uint64
 }
 
-func (s *weightedWithoutReplacementGeneric) Initialize(weights []uint64) error {
-	totalWeight := uint64(0)
+func (s *weightedWithoutReplacementGeneric) InitializeWithAdjustedWeights(weights []uint64) error {
+	totalUnadjustedWeight := big.NewInt(0)
 	for _, weight := range weights {
-		newWeight, err := safemath.Add64(totalWeight, weight)
-		if err != nil {
-			return err
-		}
-		totalWeight = newWeight
+		totalUnadjustedWeight.Add(totalUnadjustedWeight, new(big.Int).SetUint64(weight))
 	}
-	s.u.Initialize(totalWeight)
-	return s.w.Initialize(weights)
+
+	var adjustedWeights []uint64
+	var totalAdjustedWeight uint64
+	if totalUnadjustedWeight.IsUint64() {
+		adjustedWeights = weights
+		totalAdjustedWeight = totalUnadjustedWeight.Uint64()
+	} else {
+		// Adjust weights to fit within uint64
+		adjustedWeights = make([]uint64, len(weights))
+		totalAdjustedWeight = 0
+		weightFactor := totalUnadjustedWeight.Div(totalUnadjustedWeight, new(big.Int).SetUint64(math.MaxUint64)).Uint64() + 1
+		for i, weight := range weights {
+			adjustedWeights[i] = weight / weightFactor
+			totalAdjustedWeight += adjustedWeights[i]
+		}
+	}
+	s.totalWeight = totalAdjustedWeight
+	s.u.Initialize(totalAdjustedWeight)
+	return s.w.Initialize(adjustedWeights)
 }
 
 func (s *weightedWithoutReplacementGeneric) Sample(count int) ([]int, error) {
@@ -40,4 +55,8 @@ func (s *weightedWithoutReplacementGeneric) Sample(count int) ([]int, error) {
 		}
 	}
 	return indices, nil
+}
+
+func (s *weightedWithoutReplacementGeneric) TotalAdjustedWeight() uint64 {
+	return s.totalWeight
 }

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
@@ -69,9 +70,9 @@ func newConfig(t *testing.T) (Config, ids.NodeID, *common.SenderTest, *block.Tes
 	require.NoError(vdrs.AddStaker(ctx.SubnetID, peer, nil, ids.Empty, 1))
 
 	peerTracker := tracker.NewPeers()
-	totalWeight, err := vdrs.TotalWeight(ctx.SubnetID)
-	require.NoError(err)
-	startupTracker := tracker.NewStartup(peerTracker, totalWeight/2+1)
+	totalWeight := vdrs.TotalWeight(ctx.SubnetID)
+	startupWeight := new(big.Int).Add(new(big.Int).Div(totalWeight, big.NewInt(2)), big.NewInt(1))
+	startupTracker := tracker.NewStartup(peerTracker, startupWeight)
 	vdrs.RegisterCallbackListener(ctx.SubnetID, startupTracker)
 
 	require.NoError(startupTracker.Connected(context.Background(), peer, version.CurrentApp))
@@ -114,7 +115,7 @@ func TestBootstrapperStartsOnlyIfEnoughStakeIsConnected(t *testing.T) {
 	startupAlpha := alpha
 
 	peerTracker := tracker.NewPeers()
-	startupTracker := tracker.NewStartup(peerTracker, startupAlpha)
+	startupTracker := tracker.NewStartup(peerTracker, new(big.Int).SetUint64(startupAlpha))
 	peers.RegisterCallbackListener(ctx.SubnetID, startupTracker)
 
 	blocker, _ := queue.NewWithMissing(memdb.New(), "", prometheus.NewRegistry())
@@ -1346,9 +1347,9 @@ func TestBootstrapNoParseOnNew(t *testing.T) {
 	require.NoError(peers.AddStaker(ctx.SubnetID, peer, nil, ids.Empty, 1))
 
 	peerTracker := tracker.NewPeers()
-	totalWeight, err := peers.TotalWeight(ctx.SubnetID)
-	require.NoError(err)
-	startupTracker := tracker.NewStartup(peerTracker, totalWeight/2+1)
+	totalWeight := peers.TotalWeight(ctx.SubnetID)
+	startupWeight := new(big.Int).Add(new(big.Int).Div(totalWeight, big.NewInt(2)), big.NewInt(1))
+	startupTracker := tracker.NewStartup(peerTracker, startupWeight)
 	peers.RegisterCallbackListener(ctx.SubnetID, startupTracker)
 	require.NoError(startupTracker.Connected(context.Background(), peer, version.CurrentApp))
 

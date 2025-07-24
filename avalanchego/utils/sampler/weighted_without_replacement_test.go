@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	safemath "github.com/ava-labs/avalanchego/utils/math"
 )
 
 var (
@@ -44,7 +42,7 @@ var (
 	}{
 		{
 			name: "initialize overflow",
-			test: WeightedWithoutReplacementInitializeOverflowTest,
+			test: WeightedWithoutReplacementInitializeUint64OverflowTest,
 		},
 		{
 			name: "out of range",
@@ -83,12 +81,14 @@ func TestAllWeightedWithoutReplacement(t *testing.T) {
 	}
 }
 
-func WeightedWithoutReplacementInitializeOverflowTest(
+func WeightedWithoutReplacementInitializeUint64OverflowTest(
 	t *testing.T,
 	s WeightedWithoutReplacement,
 ) {
-	err := s.Initialize([]uint64{1, math.MaxUint64})
-	require.ErrorIs(t, err, safemath.ErrOverflow)
+	require := require.New(t)
+
+	err := s.InitializeWithAdjustedWeights([]uint64{1, math.MaxUint64})
+	require.NoError(err)
 }
 
 func WeightedWithoutReplacementOutOfRangeTest(
@@ -97,7 +97,7 @@ func WeightedWithoutReplacementOutOfRangeTest(
 ) {
 	require := require.New(t)
 
-	require.NoError(s.Initialize([]uint64{1}))
+	require.NoError(s.InitializeWithAdjustedWeights([]uint64{1}))
 
 	_, err := s.Sample(2)
 	require.ErrorIs(err, ErrOutOfRange)
@@ -109,7 +109,7 @@ func WeightedWithoutReplacementEmptyWithoutWeightTest(
 ) {
 	require := require.New(t)
 
-	require.NoError(s.Initialize(nil))
+	require.NoError(s.InitializeWithAdjustedWeights(nil))
 
 	indices, err := s.Sample(0)
 	require.NoError(err)
@@ -122,7 +122,7 @@ func WeightedWithoutReplacementEmptyTest(
 ) {
 	require := require.New(t)
 
-	require.NoError(s.Initialize([]uint64{1}))
+	require.NoError(s.InitializeWithAdjustedWeights([]uint64{1}))
 
 	indices, err := s.Sample(0)
 	require.NoError(err)
@@ -135,7 +135,7 @@ func WeightedWithoutReplacementSingletonTest(
 ) {
 	require := require.New(t)
 
-	require.NoError(s.Initialize([]uint64{1}))
+	require.NoError(s.InitializeWithAdjustedWeights([]uint64{1}))
 
 	indices, err := s.Sample(1)
 	require.NoError(err)
@@ -148,7 +148,7 @@ func WeightedWithoutReplacementWithZeroTest(
 ) {
 	require := require.New(t)
 
-	require.NoError(s.Initialize([]uint64{0, 1}))
+	require.NoError(s.InitializeWithAdjustedWeights([]uint64{0, 1}))
 
 	indices, err := s.Sample(1)
 	require.NoError(err)
@@ -161,7 +161,7 @@ func WeightedWithoutReplacementDistributionTest(
 ) {
 	require := require.New(t)
 
-	require.NoError(s.Initialize([]uint64{1, 1, 2}))
+	require.NoError(s.InitializeWithAdjustedWeights([]uint64{1, 1, 2}))
 
 	indices, err := s.Sample(4)
 	require.NoError(err)

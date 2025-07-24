@@ -46,7 +46,7 @@ func WeightedWithoutReplacementPowBenchmark(
 
 	_, weights, err := CalcWeightedPoW(exponent, size)
 	require.NoError(err)
-	require.NoError(s.Initialize(weights))
+	require.NoError(s.InitializeWithAdjustedWeights(weights))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

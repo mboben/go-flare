@@ -256,7 +256,7 @@ func (w *windower) makeSampler(
 	}
 
 	sampler := sampler.NewDeterministicWeightedWithoutReplacement(source)
-	return sampler, validators, sampler.Initialize(weights)
+	return sampler, validators, sampler.InitializeWithAdjustedWeights(weights)
 }
 
 func (w *windower) expectedProposer(

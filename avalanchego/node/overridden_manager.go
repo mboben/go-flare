@@ -5,6 +5,7 @@ package node
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/validators"
@@ -48,7 +49,7 @@ func (o *overriddenManager) GetValidator(_ ids.ID, nodeID ids.NodeID) (*validato
 	return o.manager.GetValidator(o.subnetID, nodeID)
 }
 
-func (o *overriddenManager) SubsetWeight(_ ids.ID, nodeIDs set.Set[ids.NodeID]) (uint64, error) {
+func (o *overriddenManager) SubsetWeight(_ ids.ID, nodeIDs set.Set[ids.NodeID]) *big.Int {
 	return o.manager.SubsetWeight(o.subnetID, nodeIDs)
 }
 
@@ -60,7 +61,7 @@ func (o *overriddenManager) Count(ids.ID) int {
 	return o.manager.Count(o.subnetID)
 }
 
-func (o *overriddenManager) TotalWeight(ids.ID) (uint64, error) {
+func (o *overriddenManager) TotalWeight(ids.ID) *big.Int {
 	return o.manager.TotalWeight(o.subnetID)
 }
 

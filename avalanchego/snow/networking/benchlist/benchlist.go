@@ -5,6 +5,7 @@ package benchlist
 
 import (
 	"fmt"
+	"math/big"
 	"math/rand"
 	"sync"
 	"time"
@@ -17,8 +18,6 @@ import (
 	"github.com/ava-labs/avalanchego/utils/heap"
 	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/timer/mockable"
-
-	safemath "github.com/ava-labs/avalanchego/utils/math"
 )
 
 // If a peer consistently does not respond to queries, it will
@@ -189,15 +188,9 @@ func (b *benchlist) removedExpiredNodes() {
 	}
 
 	b.metrics.numBenched.Set(float64(b.benchedHeap.Len()))
-	benchedStake, err := b.vdrs.SubsetWeight(b.ctx.SubnetID, b.benchlistSet)
-	if err != nil {
-		b.ctx.Log.Error("error calculating benched stake",
-			zap.Stringer("subnetID", b.ctx.SubnetID),
-			zap.Error(err),
-		)
-		return
-	}
-	b.metrics.weightBenched.Set(float64(benchedStake))
+	benchedStake := b.vdrs.SubsetWeight(b.ctx.SubnetID, b.benchlistSet)
+	benchedStakeFloat, _ := benchedStake.Float64()
+	b.metrics.weightBenched.Set(benchedStakeFloat)
 }
 
 func (b *benchlist) durationToSleep() time.Duration {
@@ -268,40 +261,19 @@ func (b *benchlist) bench(nodeID ids.NodeID) {
 		return
 	}
 
-	benchedStake, err := b.vdrs.SubsetWeight(b.ctx.SubnetID, b.benchlistSet)
-	if err != nil {
-		b.ctx.Log.Error("error calculating benched stake",
-			zap.Stringer("subnetID", b.ctx.SubnetID),
-			zap.Error(err),
-		)
-		return
-	}
+	benchedStake := b.vdrs.SubsetWeight(b.ctx.SubnetID, b.benchlistSet)
+	newBenchedStake := new(big.Int).Add(benchedStake, new(big.Int).SetUint64(validatorStake))
+	newBenchedStakeFloat, _ := newBenchedStake.Float64()
+	totalStake := b.vdrs.TotalWeight(b.ctx.SubnetID)
+	totalStakeFloat, _ := totalStake.Float64()
 
-	newBenchedStake, err := safemath.Add64(benchedStake, validatorStake)
-	if err != nil {
-		// This should never happen
-		b.ctx.Log.Error("overflow calculating new benched stake",
-			zap.Stringer("nodeID", nodeID),
-		)
-		return
-	}
+	maxBenchedStake := totalStakeFloat * b.maxPortion
 
-	totalStake, err := b.vdrs.TotalWeight(b.ctx.SubnetID)
-	if err != nil {
-		b.ctx.Log.Error("error calculating total stake",
-			zap.Stringer("subnetID", b.ctx.SubnetID),
-			zap.Error(err),
-		)
-		return
-	}
-
-	maxBenchedStake := float64(totalStake) * b.maxPortion
-
-	if float64(newBenchedStake) > maxBenchedStake {
+	if newBenchedStakeFloat > maxBenchedStake {
 		b.ctx.Log.Debug("not benching node",
 			zap.String("reason", "benched stake would exceed max"),
 			zap.Stringer("nodeID", nodeID),
-			zap.Float64("benchedStake", float64(newBenchedStake)),
+			zap.Float64("benchedStake", newBenchedStakeFloat),
 			zap.Float64("maxBenchedStake", maxBenchedStake),
 		)
 		return
@@ -339,5 +311,5 @@ func (b *benchlist) bench(nodeID ids.NodeID) {
 
 	// Update metrics
 	b.metrics.numBenched.Set(float64(b.benchedHeap.Len()))
-	b.metrics.weightBenched.Set(float64(newBenchedStake))
+	b.metrics.weightBenched.Set(newBenchedStakeFloat)
 }

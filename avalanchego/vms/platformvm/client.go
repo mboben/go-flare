@@ -5,6 +5,7 @@ package platformvm
 
 import (
 	"context"
+	"math/big"
 	"time"
 
 	"github.com/ava-labs/avalanchego/api"
@@ -233,7 +234,7 @@ type Client interface {
 	// and delegators respectively
 	GetMinStake(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (uint64, uint64, error)
 	// GetTotalStake returns the total amount (in nAVAX) staked on the network
-	GetTotalStake(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (uint64, error)
+	GetTotalStake(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (*big.Int, error)
 	// GetMaxStakeAmount returns the maximum amount of nAVAX staking to the named
 	// node during the time period.
 	//
@@ -843,18 +844,18 @@ func (c *client) GetMinStake(ctx context.Context, subnetID ids.ID, options ...rp
 	return uint64(res.MinValidatorStake), uint64(res.MinDelegatorStake), err
 }
 
-func (c *client) GetTotalStake(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (uint64, error) {
+func (c *client) GetTotalStake(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (*big.Int, error) {
 	res := &GetTotalStakeReply{}
 	err := c.requester.SendRequest(ctx, "platform.getTotalStake", &GetTotalStakeArgs{
 		SubnetID: subnetID,
 	}, res, options...)
-	var amount json.Uint64
+	var amount *big.Int
 	if subnetID == constants.PrimaryNetworkID {
 		amount = res.Stake
 	} else {
 		amount = res.Weight
 	}
-	return uint64(amount), err
+	return amount, err
 }
 
 func (c *client) GetMaxStakeAmount(ctx context.Context, subnetID ids.ID, nodeID ids.NodeID, startTime, endTime uint64, options ...rpc.Option) (uint64, error) {

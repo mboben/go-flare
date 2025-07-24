@@ -6,6 +6,7 @@ package info
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 
 	"github.com/gorilla/rpc/v2"
@@ -327,11 +328,11 @@ func (i *Info) Uptime(_ *http.Request, args *UptimeRequest, reply *UptimeRespons
 }
 
 type ACP struct {
-	SupportWeight json.Uint64         `json:"supportWeight"`
+	SupportWeight *big.Int            `json:"supportWeight"`
 	Supporters    set.Set[ids.NodeID] `json:"supporters"`
-	ObjectWeight  json.Uint64         `json:"objectWeight"`
+	ObjectWeight  *big.Int            `json:"objectWeight"`
 	Objectors     set.Set[ids.NodeID] `json:"objectors"`
-	AbstainWeight json.Uint64         `json:"abstainWeight"`
+	AbstainWeight *big.Int            `json:"abstainWeight"`
 }
 
 type ACPsReply struct {
@@ -356,7 +357,7 @@ func (i *Info) Acps(_ *http.Request, _ *struct{}, reply *ACPsReply) error {
 	reply.ACPs = make(map[uint32]*ACP, constants.CurrentACPs.Len())
 	peers := i.networking.PeerInfo(nil)
 	for _, peer := range peers {
-		weight := json.Uint64(i.validators.GetWeight(constants.PrimaryNetworkID, peer.ID))
+		weight := i.validators.GetWeight(constants.PrimaryNetworkID, peer.ID)
 		if weight == 0 {
 			continue
 		}
@@ -364,22 +365,19 @@ func (i *Info) Acps(_ *http.Request, _ *struct{}, reply *ACPsReply) error {
 		for acpNum := range peer.SupportedACPs {
 			acp := reply.getACP(acpNum)
 			acp.Supporters.Add(peer.ID)
-			acp.SupportWeight += weight
+			acp.SupportWeight = new(big.Int).Add(acp.SupportWeight, new(big.Int).SetUint64(weight))
 		}
 		for acpNum := range peer.ObjectedACPs {
 			acp := reply.getACP(acpNum)
 			acp.Objectors.Add(peer.ID)
-			acp.ObjectWeight += weight
+			acp.ObjectWeight = new(big.Int).Add(acp.ObjectWeight, new(big.Int).SetUint64(weight))
 		}
 	}
 
-	totalWeight, err := i.validators.TotalWeight(constants.PrimaryNetworkID)
-	if err != nil {
-		return err
-	}
+	totalWeight := i.validators.TotalWeight(constants.PrimaryNetworkID)
 	for acpNum := range constants.CurrentACPs {
 		acp := reply.getACP(acpNum)
-		acp.AbstainWeight = json.Uint64(totalWeight) - acp.SupportWeight - acp.ObjectWeight
+		acp.AbstainWeight = new(big.Int).Sub(totalWeight, new(big.Int).Add(acp.SupportWeight, acp.ObjectWeight))
 	}
 	return nil
 }

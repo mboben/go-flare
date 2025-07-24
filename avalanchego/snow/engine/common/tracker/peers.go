@@ -5,6 +5,7 @@ package tracker
 
 import (
 	"context"
+	"math/big"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,11 +29,11 @@ type Peers interface {
 	validators.Connector
 
 	// ConnectedWeight returns the currently connected stake weight
-	ConnectedWeight() uint64
+	ConnectedWeight() *big.Int
 	// ConnectedPercent returns the currently connected stake percentage [0, 1]
 	ConnectedPercent() float64
 	// TotalWeight returns the total validator weight
-	TotalWeight() uint64
+	TotalWeight() *big.Int
 	// SampleValidator returns a randomly selected connected validator. If there
 	// are no currently connected validators then it will return false.
 	SampleValidator() (ids.NodeID, bool)
@@ -50,7 +51,9 @@ type lockedPeers struct {
 func NewPeers() Peers {
 	return &lockedPeers{
 		peers: &peerData{
-			validators: make(map[ids.NodeID]uint64),
+			validators:      make(map[ids.NodeID]uint64),
+			totalWeight:     big.NewInt(0),
+			connectedWeight: big.NewInt(0),
 		},
 	}
 }
@@ -90,7 +93,7 @@ func (p *lockedPeers) Disconnected(ctx context.Context, nodeID ids.NodeID) error
 	return p.peers.Disconnected(ctx, nodeID)
 }
 
-func (p *lockedPeers) ConnectedWeight() uint64 {
+func (p *lockedPeers) ConnectedWeight() *big.Int {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 
@@ -104,7 +107,7 @@ func (p *lockedPeers) ConnectedPercent() float64 {
 	return p.peers.ConnectedPercent()
 }
 
-func (p *lockedPeers) TotalWeight() uint64 {
+func (p *lockedPeers) TotalWeight() *big.Int {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 
@@ -157,7 +160,9 @@ func NewMeteredPeers(namespace string, reg prometheus.Registerer) (Peers, error)
 	return &lockedPeers{
 		peers: &meteredPeers{
 			Peers: &peerData{
-				validators: make(map[ids.NodeID]uint64),
+				validators:      make(map[ids.NodeID]uint64),
+				totalWeight:     big.NewInt(0),
+				connectedWeight: big.NewInt(0),
 			},
 			percentConnected: percentConnected,
 			totalWeight:      totalWeight,
@@ -169,20 +174,23 @@ func NewMeteredPeers(namespace string, reg prometheus.Registerer) (Peers, error)
 func (p *meteredPeers) OnValidatorAdded(nodeID ids.NodeID, pk *bls.PublicKey, txID ids.ID, weight uint64) {
 	p.Peers.OnValidatorAdded(nodeID, pk, txID, weight)
 	p.numValidators.Inc()
-	p.totalWeight.Set(float64(p.Peers.TotalWeight()))
+	totalWeightFloat, _ := p.Peers.TotalWeight().Float64()
+	p.totalWeight.Set(totalWeightFloat)
 	p.percentConnected.Set(p.Peers.ConnectedPercent())
 }
 
 func (p *meteredPeers) OnValidatorRemoved(nodeID ids.NodeID, weight uint64) {
 	p.Peers.OnValidatorRemoved(nodeID, weight)
 	p.numValidators.Dec()
-	p.totalWeight.Set(float64(p.Peers.TotalWeight()))
+	totalWeightFloat, _ := p.Peers.TotalWeight().Float64()
+	p.totalWeight.Set(totalWeightFloat)
 	p.percentConnected.Set(p.Peers.ConnectedPercent())
 }
 
 func (p *meteredPeers) OnValidatorWeightChanged(nodeID ids.NodeID, oldWeight, newWeight uint64) {
 	p.Peers.OnValidatorWeightChanged(nodeID, oldWeight, newWeight)
-	p.totalWeight.Set(float64(p.Peers.TotalWeight()))
+	totalWeightFloat, _ := p.Peers.TotalWeight().Float64()
+	p.totalWeight.Set(totalWeightFloat)
 	p.percentConnected.Set(p.Peers.ConnectedPercent())
 }
 
@@ -202,9 +210,9 @@ type peerData struct {
 	// validators maps nodeIDs to their current stake weight
 	validators map[ids.NodeID]uint64
 	// totalWeight is the total weight of all validators
-	totalWeight uint64
+	totalWeight *big.Int
 	// connectedWeight contains the sum of all connected validator weights
-	connectedWeight uint64
+	connectedWeight *big.Int
 	// connectedValidators is the set of currently connected peers with a
 	// non-zero stake weight
 	connectedValidators set.Set[ids.NodeID]
@@ -214,35 +222,35 @@ type peerData struct {
 
 func (p *peerData) OnValidatorAdded(nodeID ids.NodeID, _ *bls.PublicKey, _ ids.ID, weight uint64) {
 	p.validators[nodeID] = weight
-	p.totalWeight += weight
+	p.totalWeight.Add(p.totalWeight, new(big.Int).SetUint64(weight))
 	if p.connectedPeers.Contains(nodeID) {
-		p.connectedWeight += weight
+		p.connectedWeight.Add(p.connectedWeight, new(big.Int).SetUint64(weight))
 		p.connectedValidators.Add(nodeID)
 	}
 }
 
 func (p *peerData) OnValidatorRemoved(nodeID ids.NodeID, weight uint64) {
 	delete(p.validators, nodeID)
-	p.totalWeight -= weight
+	p.totalWeight = new(big.Int).Sub(p.totalWeight, new(big.Int).SetUint64(weight))
 	if p.connectedPeers.Contains(nodeID) {
-		p.connectedWeight -= weight
+		p.connectedWeight.Sub(p.connectedWeight, new(big.Int).SetUint64(weight))
 		p.connectedValidators.Remove(nodeID)
 	}
 }
 
 func (p *peerData) OnValidatorWeightChanged(nodeID ids.NodeID, oldWeight, newWeight uint64) {
 	p.validators[nodeID] = newWeight
-	p.totalWeight -= oldWeight
-	p.totalWeight += newWeight
+	p.totalWeight.Sub(p.totalWeight, new(big.Int).SetUint64(oldWeight))
+	p.totalWeight.Add(p.totalWeight, new(big.Int).SetUint64(newWeight))
 	if p.connectedPeers.Contains(nodeID) {
-		p.connectedWeight -= oldWeight
-		p.connectedWeight += newWeight
+		p.connectedWeight.Sub(p.connectedWeight, new(big.Int).SetUint64(oldWeight))
+		p.connectedWeight.Add(p.connectedWeight, new(big.Int).SetUint64(newWeight))
 	}
 }
 
 func (p *peerData) Connected(_ context.Context, nodeID ids.NodeID, _ *version.Application) error {
 	if weight, ok := p.validators[nodeID]; ok {
-		p.connectedWeight += weight
+		p.connectedWeight.Add(p.connectedWeight, new(big.Int).SetUint64(weight))
 		p.connectedValidators.Add(nodeID)
 	}
 	p.connectedPeers.Add(nodeID)
@@ -251,26 +259,28 @@ func (p *peerData) Connected(_ context.Context, nodeID ids.NodeID, _ *version.Ap
 
 func (p *peerData) Disconnected(_ context.Context, nodeID ids.NodeID) error {
 	if weight, ok := p.validators[nodeID]; ok {
-		p.connectedWeight -= weight
+		p.connectedWeight.Sub(p.connectedWeight, new(big.Int).SetUint64(weight))
 		p.connectedValidators.Remove(nodeID)
 	}
 	p.connectedPeers.Remove(nodeID)
 	return nil
 }
 
-func (p *peerData) ConnectedWeight() uint64 {
-	return p.connectedWeight
+func (p *peerData) ConnectedWeight() *big.Int {
+	return new(big.Int).Set(p.connectedWeight)
 }
 
 func (p *peerData) ConnectedPercent() float64 {
-	if p.totalWeight == 0 {
+	if p.totalWeight.Cmp(big.NewInt(0)) == 0 {
 		return 1
 	}
-	return float64(p.connectedWeight) / float64(p.totalWeight)
+	connectedWeightFloat, _ := p.connectedWeight.Float64()
+	totalWeightFloat, _ := p.totalWeight.Float64()
+	return connectedWeightFloat / totalWeightFloat
 }
 
-func (p *peerData) TotalWeight() uint64 {
-	return p.totalWeight
+func (p *peerData) TotalWeight() *big.Int {
+	return new(big.Int).Set(p.totalWeight)
 }
 
 func (p *peerData) SampleValidator() (ids.NodeID, bool) {

@@ -1111,13 +1111,9 @@ func (n *network) NodeUptime(subnetID ids.ID) (UptimeResult, error) {
 		return UptimeResult{}, errNotValidator
 	}
 
-	totalWeightInt, err := n.config.Validators.TotalWeight(subnetID)
-	if err != nil {
-		return UptimeResult{}, fmt.Errorf("error while fetching weight for subnet %s: %w", subnetID, err)
-	}
-
+	totalWeightInt := n.config.Validators.TotalWeight(subnetID)
+	totalWeight, _ := totalWeightInt.Float64()
 	var (
-		totalWeight          = float64(totalWeightInt)
 		totalWeightedPercent = 100 * float64(myStake)
 		rewardingStake       = float64(myStake)
 	)

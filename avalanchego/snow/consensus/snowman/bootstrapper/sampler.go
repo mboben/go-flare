@@ -4,7 +4,6 @@
 package bootstrapper
 
 import (
-	"github.com/ava-labs/avalanchego/utils/math"
 	"github.com/ava-labs/avalanchego/utils/sampler"
 	"github.com/ava-labs/avalanchego/utils/set"
 )
@@ -14,28 +13,23 @@ import (
 // will error if the sum of all weights overflows.
 func Sample[T comparable](elements map[T]uint64, maxSize int) (set.Set[T], error) {
 	var (
-		keys        = make([]T, len(elements))
-		weights     = make([]uint64, len(elements))
-		totalWeight uint64
-		err         error
+		keys    = make([]T, len(elements))
+		weights = make([]uint64, len(elements))
+		err     error
 	)
 	i := 0
 	for key, weight := range elements {
 		keys[i] = key
 		weights[i] = weight
-		totalWeight, err = math.Add64(totalWeight, weight)
-		if err != nil {
-			return nil, err
-		}
 		i++
 	}
 
 	sampler := sampler.NewWeightedWithoutReplacement()
-	if err := sampler.Initialize(weights); err != nil {
+	if err := sampler.InitializeWithAdjustedWeights(weights); err != nil {
 		return nil, err
 	}
 
-	maxSize = int(min(uint64(maxSize), totalWeight))
+	maxSize = int(min(uint64(maxSize), sampler.TotalAdjustedWeight()))
 	indices, err := sampler.Sample(maxSize)
 	if err != nil {
 		return nil, err

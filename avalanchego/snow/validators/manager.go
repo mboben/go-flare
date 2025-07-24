@@ -6,6 +6,7 @@ package validators
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"sync"
 
@@ -63,7 +64,7 @@ type Manager interface {
 
 	// SubsetWeight returns the sum of the weights of the validators in the subnet.
 	// Returns err if subset weight overflows uint64.
-	SubsetWeight(subnetID ids.ID, validatorIDs set.Set[ids.NodeID]) (uint64, error)
+	SubsetWeight(subnetID ids.ID, validatorIDs set.Set[ids.NodeID]) *big.Int
 
 	// RemoveWeight from a staker in the subnet. If the staker's weight becomes 0, the staker
 	// will be removed from the subnet set.
@@ -78,8 +79,7 @@ type Manager interface {
 	Count(subnetID ids.ID) int
 
 	// TotalWeight returns the cumulative weight of all validators in the subnet.
-	// Returns err if total weight overflows uint64.
-	TotalWeight(subnetID ids.ID) (uint64, error)
+	TotalWeight(subnetID ids.ID) *big.Int
 
 	// Sample returns a collection of validatorIDs in the subnet, potentially with duplicates.
 	// If sampling the requested size isn't possible, an error will be returned.
@@ -180,12 +180,12 @@ func (m *manager) GetValidator(subnetID ids.ID, nodeID ids.NodeID) (*Validator, 
 	return set.Get(nodeID)
 }
 
-func (m *manager) SubsetWeight(subnetID ids.ID, validatorIDs set.Set[ids.NodeID]) (uint64, error) {
+func (m *manager) SubsetWeight(subnetID ids.ID, validatorIDs set.Set[ids.NodeID]) *big.Int {
 	m.lock.RLock()
 	set, exists := m.subnetToVdrs[subnetID]
 	m.lock.RUnlock()
 	if !exists {
-		return 0, nil
+		return big.NewInt(0)
 	}
 
 	return set.SubsetWeight(validatorIDs)
@@ -227,12 +227,12 @@ func (m *manager) Count(subnetID ids.ID) int {
 	return set.Len()
 }
 
-func (m *manager) TotalWeight(subnetID ids.ID) (uint64, error) {
+func (m *manager) TotalWeight(subnetID ids.ID) *big.Int {
 	m.lock.RLock()
 	set, exists := m.subnetToVdrs[subnetID]
 	m.lock.RUnlock()
 	if !exists {
-		return 0, nil
+		return big.NewInt(0)
 	}
 
 	return set.TotalWeight()

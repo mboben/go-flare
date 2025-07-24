@@ -132,14 +132,9 @@ func (t *inboundMsgByteThrottler) Acquire(ctx context.Context, msgSize uint64, n
 	vdrAllocationSize := uint64(0)
 	weight := t.vdrs.GetWeight(constants.PrimaryNetworkID, nodeID)
 	if weight != 0 {
-		totalWeight, err := t.vdrs.TotalWeight(constants.PrimaryNetworkID)
-		if err != nil {
-			t.log.Error("couldn't get total weight of primary network",
-				zap.Error(err),
-			)
-		} else {
-			vdrAllocationSize = uint64(float64(t.maxVdrBytes) * float64(weight) / float64(totalWeight))
-		}
+		totalWeight := t.vdrs.TotalWeight(constants.PrimaryNetworkID)
+		totalWeightFloat, _ := totalWeight.Float64()
+		vdrAllocationSize = uint64(float64(t.maxVdrBytes) * float64(weight) / totalWeightFloat)
 	}
 	vdrBytesAlreadyUsed := t.nodeToVdrBytesUsed[nodeID]
 	// [vdrBytesAllowed] is the number of bytes this node

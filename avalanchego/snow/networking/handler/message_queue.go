@@ -5,6 +5,7 @@ package handler
 
 import (
 	"context"
+	"math/big"
 	"sync"
 
 	"go.uber.org/zap"
@@ -213,21 +214,16 @@ func (m *messageQueue) canPop(msg message.InboundMessage) bool {
 	weight := m.vdrs.GetWeight(m.ctx.SubnetID, nodeID)
 
 	var portionWeight float64
-	if totalVdrsWeight, err := m.vdrs.TotalWeight(m.ctx.SubnetID); err != nil {
-		// The sum of validator weights should never overflow, but if they do,
-		// we treat portionWeight as 0.
-		m.ctx.Log.Error("failed to get total weight of validators",
-			zap.Stringer("subnetID", m.ctx.SubnetID),
-			zap.Error(err),
-		)
-	} else if totalVdrsWeight == 0 {
+	totalVdrsWeight := m.vdrs.TotalWeight(m.ctx.SubnetID)
+	if totalVdrsWeight.Cmp(big.NewInt(0)) == 0 {
 		// The sum of validator weights should never be 0, but handle that case
 		// for completeness here to avoid divide by 0.
 		m.ctx.Log.Warn("validator set is empty",
 			zap.Stringer("subnetID", m.ctx.SubnetID),
 		)
 	} else {
-		portionWeight = float64(weight) / float64(totalVdrsWeight)
+		totalVdrsWeightFloat, _ := totalVdrsWeight.Float64()
+		portionWeight = float64(weight) / totalVdrsWeightFloat
 	}
 
 	// Validators are allowed to use more CPU. More weight --> more CPU use allowed.

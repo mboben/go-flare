@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
@@ -78,9 +79,9 @@ func newConfig(t *testing.T) (Config, ids.NodeID, *common.SenderTest, *vertex.Te
 	require.NoError(err)
 
 	peerTracker := tracker.NewPeers()
-	totalWeight, err := vdrs.TotalWeight(constants.PrimaryNetworkID)
-	require.NoError(err)
-	startupTracker := tracker.NewStartup(peerTracker, totalWeight/2+1)
+	totalWeight := vdrs.TotalWeight(constants.PrimaryNetworkID)
+	startupWeight := new(big.Int).Add(new(big.Int).Div(totalWeight, big.NewInt(2)), big.NewInt(1))
+	startupTracker := tracker.NewStartup(peerTracker, startupWeight)
 	vdrs.RegisterCallbackListener(constants.PrimaryNetworkID, startupTracker)
 
 	avaGetHandler, err := getter.New(manager, sender, ctx.Log, time.Second, 2000, ctx.AvalancheRegisterer)

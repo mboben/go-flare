@@ -1742,10 +1742,7 @@ func (s *state) initValidatorSets() error {
 	}
 
 	s.metrics.SetLocalStake(s.validators.GetWeight(constants.PrimaryNetworkID, s.ctx.NodeID))
-	totalWeight, err := s.validators.TotalWeight(constants.PrimaryNetworkID)
-	if err != nil {
-		return fmt.Errorf("failed to get total weight of primary network validators: %w", err)
-	}
+	totalWeight := s.validators.TotalWeight(constants.PrimaryNetworkID)
 	s.metrics.SetTotalStake(totalWeight)
 	return nil
 }
@@ -2172,11 +2169,7 @@ func (s *state) writeCurrentStakers(updateValidators bool, height uint64, codecV
 		return nil
 	}
 
-	totalWeight, err := s.validators.TotalWeight(constants.PrimaryNetworkID)
-	if err != nil {
-		return fmt.Errorf("failed to get total weight of primary network: %w", err)
-	}
-
+	totalWeight := s.validators.TotalWeight(constants.PrimaryNetworkID)
 	s.metrics.SetLocalStake(s.validators.GetWeight(constants.PrimaryNetworkID, s.ctx.NodeID))
 	s.metrics.SetTotalStake(totalWeight)
 	return nil

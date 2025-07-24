@@ -4,6 +4,7 @@
 package metrics
 
 import (
+	"math/big"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -33,7 +34,7 @@ type Metrics interface {
 	// Mark that this much stake is staked on the node.
 	SetLocalStake(uint64)
 	// Mark that this much stake is staked in the network.
-	SetTotalStake(uint64)
+	SetTotalStake(*big.Int)
 	// Mark when this node will unstake from the Primary Network.
 	SetTimeUntilUnstake(time.Duration)
 	// Mark when this node will unstake from a subnet.
@@ -152,8 +153,9 @@ func (m *metrics) SetLocalStake(s uint64) {
 	m.localStake.Set(float64(s))
 }
 
-func (m *metrics) SetTotalStake(s uint64) {
-	m.totalStake.Set(float64(s))
+func (m *metrics) SetTotalStake(s *big.Int) {
+	sFloat, _ := s.Float64()
+	m.totalStake.Set(sFloat)
 }
 
 func (m *metrics) SetTimeUntilUnstake(timeUntilUnstake time.Duration) {

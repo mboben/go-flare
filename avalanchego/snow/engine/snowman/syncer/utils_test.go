@@ -5,6 +5,7 @@ package syncer
 
 import (
 	"context"
+	"math/big"
 	"testing"
 	"time"
 
@@ -73,7 +74,7 @@ func buildTestsObjects(
 	ctx *snow.ConsensusContext,
 	startupTracker tracker.Startup,
 	beacons validators.Manager,
-	alpha uint64,
+	alpha *big.Int,
 ) (
 	*stateSyncer,
 	*fullVM,

@@ -39,25 +39,6 @@ func TestAddDuplicate(t *testing.T) {
 	require.ErrorIs(err, errDuplicateValidator)
 }
 
-func TestAddOverflow(t *testing.T) {
-	require := require.New(t)
-
-	m := NewManager()
-	subnetID := ids.GenerateTestID()
-	nodeID1 := ids.GenerateTestNodeID()
-	nodeID2 := ids.GenerateTestNodeID()
-	require.NoError(m.AddStaker(subnetID, nodeID1, nil, ids.Empty, 1))
-
-	require.NoError(m.AddStaker(subnetID, nodeID2, nil, ids.Empty, math.MaxUint64))
-
-	_, err := m.TotalWeight(subnetID)
-	require.ErrorIs(err, errTotalWeightNotUint64)
-
-	set := set.Of(nodeID1, nodeID2)
-	_, err = m.SubsetWeight(subnetID, set)
-	require.ErrorIs(err, safemath.ErrOverflow)
-}
-
 func TestAddWeightZeroWeight(t *testing.T) {
 	require := require.New(t)
 
@@ -71,22 +52,6 @@ func TestAddWeightZeroWeight(t *testing.T) {
 	require.ErrorIs(err, ErrZeroWeight)
 }
 
-func TestAddWeightOverflow(t *testing.T) {
-	require := require.New(t)
-
-	m := NewManager()
-	subnetID := ids.GenerateTestID()
-	require.NoError(m.AddStaker(subnetID, ids.GenerateTestNodeID(), nil, ids.Empty, 1))
-
-	nodeID := ids.GenerateTestNodeID()
-	require.NoError(m.AddStaker(subnetID, nodeID, nil, ids.Empty, 1))
-
-	require.NoError(m.AddWeight(subnetID, nodeID, math.MaxUint64-1))
-
-	_, err := m.TotalWeight(subnetID)
-	require.ErrorIs(err, errTotalWeightNotUint64)
-}
-
 func TestGetWeight(t *testing.T) {
 	require := require.New(t)
 
@@ -98,9 +63,8 @@ func TestGetWeight(t *testing.T) {
 
 	require.NoError(m.AddStaker(subnetID, nodeID, nil, ids.Empty, 1))
 
-	totalWeight, err := m.TotalWeight(subnetID)
-	require.NoError(err)
-	require.Equal(uint64(1), totalWeight)
+	totalWeight := m.TotalWeight(subnetID)
+	require.Equal(uint64(1), totalWeight.Uint64())
 }
 
 func TestSubsetWeight(t *testing.T) {
@@ -124,9 +88,8 @@ func TestSubsetWeight(t *testing.T) {
 	require.NoError(m.AddStaker(subnetID, nodeID2, nil, ids.Empty, weight2))
 
 	expectedWeight := weight0 + weight1
-	subsetWeight, err := m.SubsetWeight(subnetID, subset)
-	require.NoError(err)
-	require.Equal(expectedWeight, subsetWeight)
+	subsetWeight := m.SubsetWeight(subnetID, subset)
+	require.Equal(expectedWeight, subsetWeight.Uint64())
 }
 
 func TestRemoveWeightZeroWeight(t *testing.T) {
@@ -167,9 +130,8 @@ func TestRemoveWeightUnderflow(t *testing.T) {
 	err := m.RemoveWeight(subnetID, nodeID, 2)
 	require.ErrorIs(err, safemath.ErrUnderflow)
 
-	totalWeight, err := m.TotalWeight(subnetID)
-	require.NoError(err)
-	require.Equal(uint64(2), totalWeight)
+	totalWeight := m.TotalWeight(subnetID)
+	require.Equal(uint64(2), totalWeight.Uint64())
 }
 
 func TestGet(t *testing.T) {
@@ -335,8 +297,7 @@ func TestWeight(t *testing.T) {
 
 	require.NoError(m.AddStaker(subnetID, vdr1, nil, ids.Empty, weight1))
 
-	setWeight, err := m.TotalWeight(subnetID)
-	require.NoError(err)
+	setWeight := m.TotalWeight(subnetID).Uint64()
 	expectedWeight := weight0 + weight1
 	require.Equal(expectedWeight, setWeight)
 }
