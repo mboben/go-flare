@@ -10,10 +10,6 @@ The changes go into effect
  * March 31, 2026 at 12 PM UTC for the Songbird network,
  * April 14, 2026 at 12 PM UTC for the Flare network.
 
-### Note:
-
- * We recommend setting `gas-target` to `15000000` in the C-chain config. See [Optimizing C-Chain Gas Fees](https://www.avax.network/about/blog/octane-optimizing-c-chain-gas-fees) for more details.
-
 ## v1.12.0
 
 The changes go into effect
